@@ -61,7 +61,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         // Automatically prompt user on first launch
         app.is_setting_user = true;
         tokio::spawn(async move {
-            if let Ok(tracks) = client.search_tracks("SoFaygo", 15).await {
+            if let Ok(tracks) = client.search_tracks("SoFaygo", 50).await {
                 let _ = tx.send(app::AppCommand::UpdateTracks(tracks));
             }
         });

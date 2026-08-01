@@ -58,7 +58,7 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                             let tx = app.command_tx.clone();
                             app.status_message = format!("Searching SoundCloud for '{}'...", query);
                             tokio::spawn(async move {
-                                if let Ok(tracks) = client.search_tracks(&query, 15).await {
+                                if let Ok(tracks) = client.search_tracks(&query, 50).await {
                                     let _ = tx.send(crate::app::AppCommand::UpdateTracks(tracks));
                                 }
                             });
@@ -97,7 +97,7 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                                 app.config.save();
                                 app.status_message = "Saved OAuth Token! Fetching your likes...".to_string();
                                 tokio::spawn(async move {
-                                    if let Ok(tracks) = client.get_my_likes(50).await {
+                                    if let Ok(tracks) = client.get_my_likes(100).await {
                                         let _ = tx.send(crate::app::AppCommand::UpdateTracks(tracks));
                                     }
                                 });
@@ -107,7 +107,7 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                                 app.status_message = format!("Fetching SoundCloud likes for '{}'...", handle);
                                 tokio::spawn(async move {
                                     if let Ok(user) = client.resolve_user(&handle).await {
-                                        if let Ok(tracks) = client.get_user_likes(user.id, 50).await {
+                                        if let Ok(tracks) = client.get_user_likes(user.id, 100).await {
                                             let _ = tx.send(crate::app::AppCommand::UpdateTracks(tracks));
                                         }
                                     }
