@@ -63,13 +63,39 @@ impl ActiveTab {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivePane {
     LeftSidebar,
-    CenterTracks,
-    RightQueue,
+    RightMain,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RightView {
+    NowPlaying,
+    Lyrics,
+    Queue,
+    Tracks,
+}
+
+impl RightView {
+    pub const ALL: [RightView; 4] = [
+        RightView::NowPlaying,
+        RightView::Lyrics,
+        RightView::Queue,
+        RightView::Tracks,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            RightView::NowPlaying => "Now Playing",
+            RightView::Lyrics => "Lyrics",
+            RightView::Queue => "Queue",
+            RightView::Tracks => "Tracks",
+        }
+    }
 }
 
 pub struct App {
     pub active_tab: ActiveTab,
     pub active_pane: ActivePane,
+    pub current_view: RightView,
     pub theme: Theme,
     pub available_themes: Vec<Theme>,
     pub theme_picker_open: bool,
@@ -141,7 +167,8 @@ impl App {
 
         Self {
             active_tab: ActiveTab::Library,
-            active_pane: ActivePane::CenterTracks,
+            active_pane: ActivePane::LeftSidebar,
+            current_view: RightView::NowPlaying,
             theme: current_theme,
             available_themes,
             theme_picker_open: false,
@@ -199,17 +226,30 @@ impl App {
 
     pub fn next_pane(&mut self) {
         self.active_pane = match self.active_pane {
-            ActivePane::LeftSidebar => ActivePane::CenterTracks,
-            ActivePane::CenterTracks => ActivePane::RightQueue,
-            ActivePane::RightQueue => ActivePane::LeftSidebar,
+            ActivePane::LeftSidebar => ActivePane::RightMain,
+            ActivePane::RightMain => ActivePane::LeftSidebar,
         };
     }
 
     pub fn previous_pane(&mut self) {
-        self.active_pane = match self.active_pane {
-            ActivePane::LeftSidebar => ActivePane::RightQueue,
-            ActivePane::CenterTracks => ActivePane::LeftSidebar,
-            ActivePane::RightQueue => ActivePane::CenterTracks,
+        self.next_pane();
+    }
+
+    pub fn next_view(&mut self) {
+        self.current_view = match self.current_view {
+            RightView::NowPlaying => RightView::Lyrics,
+            RightView::Lyrics => RightView::Queue,
+            RightView::Queue => RightView::Tracks,
+            RightView::Tracks => RightView::NowPlaying,
+        };
+    }
+
+    pub fn previous_view(&mut self) {
+        self.current_view = match self.current_view {
+            RightView::NowPlaying => RightView::Tracks,
+            RightView::Lyrics => RightView::NowPlaying,
+            RightView::Queue => RightView::Lyrics,
+            RightView::Tracks => RightView::Queue,
         };
     }
 
@@ -220,14 +260,15 @@ impl App {
                     self.selected_left_index = (self.selected_left_index + 1) % self.left_items.len();
                 }
             }
-            ActivePane::CenterTracks => {
-                if !self.tracks.is_empty() {
-                    self.selected_track_index = (self.selected_track_index + 1) % self.tracks.len();
-                }
-            }
-            ActivePane::RightQueue => {
-                if !self.queue.is_empty() {
-                    self.queue_index = (self.queue_index + 1) % self.queue.len();
+            ActivePane::RightMain => {
+                if self.current_view == RightView::Tracks {
+                    if !self.tracks.is_empty() {
+                        self.selected_track_index = (self.selected_track_index + 1) % self.tracks.len();
+                    }
+                } else if self.current_view == RightView::Queue {
+                    if !self.queue.is_empty() {
+                        self.queue_index = (self.queue_index + 1) % self.queue.len();
+                    }
                 }
             }
         }
@@ -244,21 +285,22 @@ impl App {
                     }
                 }
             }
-            ActivePane::CenterTracks => {
-                if !self.tracks.is_empty() {
-                    if self.selected_track_index == 0 {
-                        self.selected_track_index = self.tracks.len() - 1;
-                    } else {
-                        self.selected_track_index -= 1;
+            ActivePane::RightMain => {
+                if self.current_view == RightView::Tracks {
+                    if !self.tracks.is_empty() {
+                        if self.selected_track_index == 0 {
+                            self.selected_track_index = self.tracks.len() - 1;
+                        } else {
+                            self.selected_track_index -= 1;
+                        }
                     }
-                }
-            }
-            ActivePane::RightQueue => {
-                if !self.queue.is_empty() {
-                    if self.queue_index == 0 {
-                        self.queue_index = self.queue.len() - 1;
-                    } else {
-                        self.queue_index -= 1;
+                } else if self.current_view == RightView::Queue {
+                    if !self.queue.is_empty() {
+                        if self.queue_index == 0 {
+                            self.queue_index = self.queue.len() - 1;
+                        } else {
+                            self.queue_index -= 1;
+                        }
                     }
                 }
             }

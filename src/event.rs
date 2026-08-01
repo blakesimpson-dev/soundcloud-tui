@@ -128,8 +128,8 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
 
             match key.code {
                 KeyCode::Char('q') => app.should_quit = true,
-                KeyCode::Tab => app.next_tab(),
-                KeyCode::BackTab => app.previous_tab(),
+                KeyCode::Tab | KeyCode::Char('>') | KeyCode::Char('L') => app.next_view(),
+                KeyCode::BackTab | KeyCode::Char('<') | KeyCode::Char('H') => app.previous_view(),
                 KeyCode::Right | KeyCode::Char('l') => app.next_pane(),
                 KeyCode::Left | KeyCode::Char('h') => app.previous_pane(),
                 KeyCode::Down | KeyCode::Char('j') => app.select_next_item(),
@@ -155,6 +155,7 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                 KeyCode::Enter => {
                     if let Some(track) = app.tracks.get(app.selected_track_index).cloned() {
                         app.currently_playing = Some(track.clone());
+                        app.current_view = crate::app::RightView::NowPlaying;
                         app.current_lyrics = None;
                         app.synced_lyrics.clear();
                         let client = app.client.clone();

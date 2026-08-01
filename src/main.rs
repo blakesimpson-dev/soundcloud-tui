@@ -83,7 +83,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 app::AppCommand::UpdateTracks(tracks) => {
                     app.tracks = tracks;
                     app.selected_track_index = 0;
-                    app.status_message = "Ready.".to_string();
+                    app.current_view = app::RightView::Tracks;
+                    app.status_message = format!("Loaded {} tracks.", app.tracks.len());
                 }
                 app::AppCommand::UpdateCoverArt(img_bytes) => {
                     if let Ok(img) = image::load_from_memory(&img_bytes) {

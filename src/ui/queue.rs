@@ -1,35 +1,19 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{List, ListItem, ListState, Paragraph},
     Frame,
 };
 
 use crate::app::{ActivePane, App};
 
-pub fn render_right_sidebar(app: &App, area: Rect, frame: &mut Frame) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(50), // Top: Lyrics / Track Bio
-            Constraint::Percentage(50), // Bottom: Queue
-        ])
-        .split(area);
-
-    // Render Lyrics / Info Top Pane
-    let lyrics_block = Block::default()
-        .title("Lyrics / Info")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(app.theme.border))
-        .style(Style::default().bg(app.theme.background));
-
+pub fn render_lyrics_view(app: &App, area: Rect, frame: &mut Frame) {
     let title = if let Some(track) = app.currently_playing.as_ref().or(app.tracks.get(app.selected_track_index)) {
         track.display_title().to_string()
     } else {
         "No Track Selected".to_string()
     };
-
 
     let paragraph = if !app.synced_lyrics.is_empty() {
         let current_ms = app.audio_player.state().current_millis.load(std::sync::atomic::Ordering::SeqCst);
@@ -40,9 +24,9 @@ pub fn render_right_sidebar(app: &App, area: Rect, frame: &mut Frame) {
 
         let mut lyrics_lines = vec![
             Line::from(Span::styled(
-                format!(">> {}", title),
+                format!("♪ {}", title),
                 Style::default()
-                    .fg(app.theme.foreground)
+                    .fg(app.theme.primary)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
@@ -74,11 +58,10 @@ pub fn render_right_sidebar(app: &App, area: Rect, frame: &mut Frame) {
             lyrics_lines.push(Line::from(Span::styled(line.text.clone(), style)));
         }
 
-        let visible_height = chunks[0].height.saturating_sub(2) as usize;
+        let visible_height = area.height as usize;
         let scroll_offset = (active_idx + 2).saturating_sub(visible_height / 2) as u16;
 
         Paragraph::new(lyrics_lines)
-            .block(lyrics_block)
             .alignment(ratatui::layout::Alignment::Center)
             .scroll((scroll_offset, 0))
     } else {
@@ -108,9 +91,9 @@ pub fn render_right_sidebar(app: &App, area: Rect, frame: &mut Frame) {
 
         let mut lyrics_lines = vec![
             Line::from(Span::styled(
-                format!(">> {}", title),
+                format!("♪ {}", title),
                 Style::default()
-                    .fg(app.theme.foreground)
+                    .fg(app.theme.primary)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
@@ -142,52 +125,46 @@ pub fn render_right_sidebar(app: &App, area: Rect, frame: &mut Frame) {
             lyrics_lines.push(Line::from(Span::styled(line.to_string(), style)));
         }
 
-        let visible_height = chunks[0].height.saturating_sub(2) as usize;
+        let visible_height = area.height as usize;
         let scroll_offset = (active_idx + 2).saturating_sub(visible_height / 2) as u16;
 
         Paragraph::new(lyrics_lines)
-            .block(lyrics_block)
             .alignment(ratatui::layout::Alignment::Center)
             .scroll((scroll_offset, 0))
     };
 
-    frame.render_widget(paragraph, chunks[0]);
+    frame.render_widget(paragraph, area);
+}
 
-    // Render Queue Bottom Pane
-    let queue_title = format!("Queue ({}/{})", app.queue_index + 1, app.queue.len().max(1));
-    let is_focused = app.active_pane == ActivePane::RightQueue;
-    let border_color = if is_focused {
-        app.theme.border_focused
-    } else {
-        app.theme.border
-    };
-
-    let queue_block = Block::default()
-        .title(queue_title)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
-        .style(Style::default().bg(app.theme.background));
+pub fn render_queue_view(app: &App, area: Rect, frame: &mut Frame) {
+    let is_focused = app.active_pane == ActivePane::RightMain;
 
     let items: Vec<ListItem> = if app.queue.is_empty() {
         vec![
-            ListItem::new(">> Everything Is Burning > IAMX"),
-            ListItem::new("Oh Cruel Darkness Embrace Me > IAMX"),
-            ListItem::new("Dead In This House > IAMX"),
-            ListItem::new("Triggers > IAMX"),
-            ListItem::new("Scars > IAMX"),
+            ListItem::new("▶ Everything Is Burning — IAMX"),
+            ListItem::new("  Oh Cruel Darkness Embrace Me — IAMX"),
+            ListItem::new("  Dead In This House — IAMX"),
+            ListItem::new("  Triggers — IAMX"),
+            ListItem::new("  Scars — IAMX"),
         ]
     } else {
         app.queue
             .iter()
             .enumerate()
             .map(|(idx, track)| {
-                let prefix = if idx == app.queue_index { ">>" } else { "  " };
-                ListItem::new(format!(
-                    "{} {} > {}",
-                    prefix,
-                    track.display_title(),
-                    track.display_artist()
-                ))
+                let prefix = if idx == app.queue_index { "▶ " } else { "  " };
+                let style = if is_focused && idx == app.queue_index {
+                    Style::default().fg(app.theme.selection_fg).bg(app.theme.selection_bg).add_modifier(Modifier::BOLD)
+                } else if idx == app.queue_index {
+                    Style::default().fg(app.theme.primary)
+                } else {
+                    Style::default().fg(app.theme.foreground)
+                };
+
+                ListItem::new(Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(app.theme.primary)),
+                    Span::styled(format!("{} — {}", track.display_title(), track.display_artist()), style),
+                ]))
             })
             .collect()
     };
@@ -196,12 +173,11 @@ pub fn render_right_sidebar(app: &App, area: Rect, frame: &mut Frame) {
     state.select(Some(app.queue_index));
 
     let list = List::new(items)
-        .block(queue_block)
         .highlight_style(
             Style::default()
                 .fg(app.theme.selection_fg)
                 .bg(app.theme.selection_bg),
         );
 
-    frame.render_stateful_widget(list, chunks[1], &mut state);
+    frame.render_stateful_widget(list, area, &mut state);
 }
