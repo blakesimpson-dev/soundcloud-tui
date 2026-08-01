@@ -194,7 +194,10 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                     app.is_setting_user = true;
                     app.user_input.clear();
                 }
-                KeyCode::Char(' ') => app.audio_player.toggle_pause(),
+                KeyCode::Char(' ') => {
+                    app.audio_player.toggle_pause();
+                    app.update_mpris_playback();
+                }
                 KeyCode::Char('+') | KeyCode::Char('=') => {
                     let cur = app.audio_player.state().volume.load(std::sync::atomic::Ordering::SeqCst);
                     app.audio_player.set_volume(cur + 5);
@@ -208,97 +211,7 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                     }
                 }
                 KeyCode::Enter => {
-                    if let Some(track) = app.tracks.get(app.selected_track_index).cloned() {
-                        app.currently_playing = Some(track.clone());
-                        app.current_view = crate::app::RightView::NowPlaying;
-                        app.current_lyrics = None;
-                        app.synced_lyrics.clear();
-                        let client = app.client.clone();
-                        let tx = app.command_tx.clone();
-                        let artwork_url = track.get_artwork_url();
-                        
-                        // Resolve stream URL asynchronously
-                        let track_clone = track.clone();
-                        tokio::spawn(async move {
-                            if let Ok(url) = client.get_stream_url(&track_clone).await {
-                                let _ = tx.send(crate::app::AppCommand::PlayUrl(url));
-                            }
-                        });
-
-                        // Fetch artwork asynchronously
-                        if let Some(art_url) = artwork_url {
-                            let tx_art = app.command_tx.clone();
-                            tokio::spawn(async move {
-                                if let Ok(resp) = reqwest::get(&art_url).await {
-                                    if let Ok(bytes) = resp.bytes().await {
-                                        let _ = tx_art.send(crate::app::AppCommand::UpdateCoverArt(bytes.to_vec()));
-                                    }
-                                }
-                            });
-                        }
-                        
-                        // Fetch lyrics asynchronously from LRCLIB using fuzzy search
-                        let tx_lyrics = app.command_tx.clone();
-                        let title = track.display_title().to_string();
-                        let artist = track.display_artist().to_string();
-                        tokio::spawn(async move {
-                            let client = reqwest::Client::builder()
-                                .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                                .build()
-                                .unwrap_or_default();
-
-                            let url_with_artist = format!("https://lrclib.net/api/search?q={}+{}", 
-                                urlencoding::encode(&title), 
-                                urlencoding::encode(&artist));
-
-                            let mut lyrics_opt = None;
-
-                            if let Ok(resp) = client.get(&url_with_artist).send().await {
-                                if let Ok(json) = resp.json::<serde_json::Value>().await {
-                                    if let Some(array) = json.as_array() {
-                                        lyrics_opt = array.iter().find_map(|item| {
-                                            item.get("syncedLyrics")
-                                                .and_then(|v| v.as_str())
-                                                .filter(|s| !s.is_empty())
-                                                .or_else(|| {
-                                                    item.get("plainLyrics")
-                                                        .and_then(|v| v.as_str())
-                                                        .filter(|s| !s.is_empty())
-                                                })
-                                                .map(|s| s.to_string())
-                                        });
-                                    }
-                                }
-                            }
-
-                            // Fallback: search title only if title+artist gave no lyrics
-                            if lyrics_opt.is_none() {
-                                let url_title_only = format!("https://lrclib.net/api/search?q={}", 
-                                    urlencoding::encode(&title));
-                                if let Ok(resp) = client.get(&url_title_only).send().await {
-                                    if let Ok(json) = resp.json::<serde_json::Value>().await {
-                                        if let Some(array) = json.as_array() {
-                                            lyrics_opt = array.iter().find_map(|item| {
-                                                item.get("syncedLyrics")
-                                                    .and_then(|v| v.as_str())
-                                                    .filter(|s| !s.is_empty())
-                                                    .or_else(|| {
-                                                        item.get("plainLyrics")
-                                                            .and_then(|v| v.as_str())
-                                                            .filter(|s| !s.is_empty())
-                                                    })
-                                                    .map(|s| s.to_string())
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-
-                            if let Some(lyrics) = lyrics_opt {
-                                let _ = tx_lyrics.send(crate::app::AppCommand::UpdateLyrics(lyrics));
-                            }
-                        });
-                    }
+                    app.play_selected_track();
                 }
                 KeyCode::Char('/') | KeyCode::Char('s') => {
                     app.is_searching = true;

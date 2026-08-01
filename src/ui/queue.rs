@@ -29,8 +29,21 @@ pub fn render_lyrics_view(app: &App, area: Rect, frame: &mut Frame) {
                     .fg(app.theme.primary)
                     .add_modifier(Modifier::BOLD),
             )),
-            Line::from(""),
         ];
+
+        if let Some(info) = &app.current_lyrics_info {
+            lyrics_lines.push(Line::from(vec![
+                Span::styled(" [ ", Style::default().fg(app.theme.border)),
+                Span::styled(format!("Backend: {}", info.provider), Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)),
+                Span::styled(" • ", Style::default().fg(app.theme.border)),
+                Span::styled(format!("{}", info.match_type), Style::default().fg(app.theme.primary)),
+                Span::styled(" • ", Style::default().fg(app.theme.border)),
+                Span::styled(format!("Matched: {} - {}", info.matched_artist, info.matched_title), Style::default().fg(app.theme.foreground)),
+                Span::styled(" ]", Style::default().fg(app.theme.border)),
+            ]));
+        }
+
+        lyrics_lines.push(Line::from(""));
 
         for (idx, line) in app.synced_lyrics.iter().enumerate() {
             let dist = (idx as i64 - active_idx as i64).abs();
@@ -96,8 +109,21 @@ pub fn render_lyrics_view(app: &App, area: Rect, frame: &mut Frame) {
                     .fg(app.theme.primary)
                     .add_modifier(Modifier::BOLD),
             )),
-            Line::from(""),
         ];
+
+        if let Some(info) = &app.current_lyrics_info {
+            lyrics_lines.push(Line::from(vec![
+                Span::styled(" [ ", Style::default().fg(app.theme.border)),
+                Span::styled(format!("Backend: {}", info.provider), Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)),
+                Span::styled(" • ", Style::default().fg(app.theme.border)),
+                Span::styled(format!("{}", info.match_type), Style::default().fg(app.theme.primary)),
+                Span::styled(" • ", Style::default().fg(app.theme.border)),
+                Span::styled(format!("Matched: {} - {}", info.matched_artist, info.matched_title), Style::default().fg(app.theme.foreground)),
+                Span::styled(" ]", Style::default().fg(app.theme.border)),
+            ]));
+        }
+
+        lyrics_lines.push(Line::from(""));
 
         for (idx, line) in lines.iter().enumerate() {
             let dist = (idx as i64 - active_idx as i64).abs();

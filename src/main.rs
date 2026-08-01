@@ -95,12 +95,34 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         *lock = None;
                     }
                 }
-                app::AppCommand::UpdateLyrics(lyrics) => {
+                app::AppCommand::UpdateLyrics { lyrics, info } => {
                     app.synced_lyrics = app::parse_lrc(&lyrics);
                     app.current_lyrics = Some(lyrics);
+                    app.current_lyrics_info = Some(info);
+                }
+                app::AppCommand::TogglePause => {
+                    app.audio_player.toggle_pause();
+                    app.update_mpris_playback();
+                }
+                app::AppCommand::NextTrack => {
+                    app.play_next_track();
+                }
+                app::AppCommand::PrevTrack => {
+                    app.play_prev_track();
+                }
+                app::AppCommand::Seek(delta_ms) => {
+                    let secs = delta_ms / 1000;
+                    app.audio_player.seek(secs);
+                    app.update_mpris_playback();
+                }
+                app::AppCommand::SetPosition(ms) => {
+                    app.audio_player.seek_absolute(ms);
+                    app.update_mpris_playback();
                 }
             }
         }
+
+        app.tick_mpris();
 
         terminal.draw(|f| {
             ui::render(&app, f);

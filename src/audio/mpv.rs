@@ -102,10 +102,27 @@ impl AudioPlayer {
     }
 
     pub fn seek(&mut self, seconds: i64) {
+        let cur_ms = self.state.current_millis.load(Ordering::SeqCst) as i64;
+        let new_ms = (cur_ms + seconds * 1000).max(0) as u64;
+        self.state.current_millis.store(new_ms, Ordering::SeqCst);
+        self.state.current_secs.store(new_ms / 1000, Ordering::SeqCst);
+
         #[cfg(feature = "mpv-backend")]
         if let Some(mpv) = &self.mpv {
             let secs_str = seconds.to_string();
             let _ = mpv.command("seek", &[&secs_str, "relative"]);
+        }
+    }
+
+    pub fn seek_absolute(&mut self, milliseconds: u64) {
+        self.state.current_millis.store(milliseconds, Ordering::SeqCst);
+        self.state.current_secs.store(milliseconds / 1000, Ordering::SeqCst);
+
+        #[cfg(feature = "mpv-backend")]
+        if let Some(mpv) = &self.mpv {
+            let secs = (milliseconds as f64) / 1000.0;
+            let secs_str = secs.to_string();
+            let _ = mpv.command("seek", &[&secs_str, "absolute"]);
         }
     }
 
