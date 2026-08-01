@@ -81,8 +81,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
                 app::AppCommand::UpdateTracks(tracks) => {
-                    app.tracks = tracks;
-                    app.selected_track_index = 0;
+                    app.set_tracks(tracks);
                     app.current_view = app::RightView::Tracks;
                     app.status_message = format!("Loaded {} tracks.", app.tracks.len());
                 }

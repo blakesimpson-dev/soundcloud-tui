@@ -16,7 +16,7 @@ use crate::app::{App, RightView};
 use library::{render_center_tracks, render_left_sidebar};
 use nowplaying::render_nowplaying_view;
 use player_bar::render_now_strip;
-use popup::{render_search_popup, render_theme_popup, render_user_popup};
+use popup::{render_filter_popup, render_search_popup, render_theme_popup, render_user_popup};
 use queue::{render_lyrics_view, render_queue_view};
 
 pub fn render(app: &App, frame: &mut Frame) {
@@ -46,6 +46,7 @@ pub fn render(app: &App, frame: &mut Frame) {
     render_theme_popup(app, frame);
     render_search_popup(app, frame);
     render_user_popup(app, frame);
+    render_filter_popup(app, frame);
 }
 
 fn render_header(app: &App, area: Rect, frame: &mut Frame) {
@@ -115,6 +116,8 @@ fn render_footer(app: &App, area: Rect, frame: &mut Frame) {
         Span::styled("play  ", Style::default().fg(app.theme.foreground_dim)),
         Span::styled("+/- ", Style::default().fg(app.theme.primary)),
         Span::styled("vol  ", Style::default().fg(app.theme.foreground_dim)),
+        Span::styled("f ", Style::default().fg(app.theme.primary)),
+        Span::styled("filter  ", Style::default().fg(app.theme.foreground_dim)),
         Span::styled("t ", Style::default().fg(app.theme.primary)),
         Span::styled("theme  ", Style::default().fg(app.theme.foreground_dim)),
         Span::styled("u ", Style::default().fg(app.theme.primary)),

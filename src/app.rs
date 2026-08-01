@@ -92,6 +92,32 @@ impl RightView {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortOrder {
+    Default,
+    PlaysDesc,
+    DurationDesc,
+    TitleAsc,
+}
+
+impl SortOrder {
+    pub const ALL: [SortOrder; 4] = [
+        SortOrder::Default,
+        SortOrder::PlaysDesc,
+        SortOrder::DurationDesc,
+        SortOrder::TitleAsc,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            SortOrder::Default => "SoundCloud Order",
+            SortOrder::PlaysDesc => "Most Plays",
+            SortOrder::DurationDesc => "Longest Duration",
+            SortOrder::TitleAsc => "Title (A-Z)",
+        }
+    }
+}
+
 pub struct App {
     pub active_tab: ActiveTab,
     pub active_pane: ActivePane,
@@ -102,7 +128,14 @@ pub struct App {
     pub theme_picker_selected: usize,
 
     pub tracks: Vec<Track>,
+    pub all_fetched_tracks: Vec<Track>,
     pub selected_track_index: usize,
+
+    pub filter_snippets: bool,
+    pub min_duration_secs: u64,
+    pub sort_order: SortOrder,
+    pub filter_modal_open: bool,
+    pub filter_modal_selected: usize,
 
     pub left_items: Vec<String>,
     pub selected_left_index: usize,
@@ -175,7 +208,14 @@ impl App {
             theme_picker_selected: 0,
 
             tracks: Vec::new(),
+            all_fetched_tracks: Vec::new(),
             selected_track_index: 0,
+
+            filter_snippets: true,
+            min_duration_secs: 45,
+            sort_order: SortOrder::Default,
+            filter_modal_open: false,
+            filter_modal_selected: 0,
 
             left_items,
             selected_left_index: 0,
@@ -204,6 +244,42 @@ impl App {
             is_setting_user: false,
             user_input: String::new(),
         }
+    }
+
+    pub fn set_tracks(&mut self, tracks: Vec<Track>) {
+        self.all_fetched_tracks = tracks;
+        self.apply_filters_and_sort();
+    }
+
+    pub fn apply_filters_and_sort(&mut self) {
+        let min_ms = if self.filter_snippets {
+            self.min_duration_secs * 1000
+        } else {
+            0
+        };
+
+        let mut filtered: Vec<Track> = self
+            .all_fetched_tracks
+            .iter()
+            .filter(|t| t.duration.unwrap_or(0) >= min_ms)
+            .cloned()
+            .collect();
+
+        match self.sort_order {
+            SortOrder::Default => {}
+            SortOrder::PlaysDesc => {
+                filtered.sort_by(|a, b| b.playback_count.unwrap_or(0).cmp(&a.playback_count.unwrap_or(0)));
+            }
+            SortOrder::DurationDesc => {
+                filtered.sort_by(|a, b| b.duration.unwrap_or(0).cmp(&a.duration.unwrap_or(0)));
+            }
+            SortOrder::TitleAsc => {
+                filtered.sort_by(|a, b| a.display_title().to_lowercase().cmp(&b.display_title().to_lowercase()));
+            }
+        }
+
+        self.tracks = filtered;
+        self.selected_track_index = 0;
     }
 
     pub fn next_tab(&mut self) {

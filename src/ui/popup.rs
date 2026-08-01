@@ -186,3 +186,69 @@ pub fn render_theme_popup(app: &App, frame: &mut Frame) {
 
     frame.render_stateful_widget(list, area, &mut state);
 }
+
+pub fn render_filter_popup(app: &App, frame: &mut Frame) {
+    if !app.filter_modal_open {
+        return;
+    }
+
+    let area = top_centered_rect(55, 7, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(Line::from(vec![
+            Span::styled(" FILTER & SORT TRACKS ", Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)),
+        ]))
+        .title(Line::from(vec![
+            Span::styled("[ESC] done ", Style::default().fg(app.theme.foreground_dim)),
+        ]).alignment(ratatui::layout::Alignment::Right))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.primary))
+        .style(Style::default().bg(app.theme.background));
+
+    let snippet_status = if app.filter_snippets { "[ON] (Hide < 45s)" } else { "[OFF] (Show all)" };
+    let sort_status = app.sort_order.label();
+
+    let filter_options = vec![
+        format!("1. Hide Snippets / Samples: {}", snippet_status),
+        format!("2. Sort Order: {}", sort_status),
+        format!("3. Min Duration Cutoff: {}s", app.min_duration_secs),
+        format!("4. Reset Filters to Defaults"),
+    ];
+
+    let items: Vec<ListItem> = filter_options
+        .iter()
+        .enumerate()
+        .map(|(idx, option)| {
+            let is_selected = idx == app.filter_modal_selected;
+            let prefix = if is_selected { "▶ " } else { "  " };
+
+            let style = if is_selected {
+                Style::default()
+                    .fg(app.theme.selection_fg)
+                    .bg(app.theme.selection_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(app.theme.foreground)
+            };
+
+            ListItem::new(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(app.theme.primary)),
+                Span::styled(option, style),
+            ]))
+        })
+        .collect();
+
+    let mut state = ListState::default();
+    state.select(Some(app.filter_modal_selected));
+
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(
+            Style::default()
+                .fg(app.theme.selection_fg)
+                .bg(app.theme.selection_bg),
+        );
+
+    frame.render_stateful_widget(list, area, &mut state);
+}

@@ -6,6 +6,60 @@ use crate::app::App;
 pub async fn handle_events(app: &mut App) -> Result<(), String> {
     if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
         if let CrossEvent::Key(key) = event::read().map_err(|e| e.to_string())? {
+            // Filter modal handling
+            if app.filter_modal_open {
+                match key.code {
+                    KeyCode::Esc => {
+                        app.filter_modal_open = false;
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        app.filter_modal_selected = (app.filter_modal_selected + 1) % 4;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if app.filter_modal_selected == 0 {
+                            app.filter_modal_selected = 3;
+                        } else {
+                            app.filter_modal_selected -= 1;
+                        }
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        match app.filter_modal_selected {
+                            0 => {
+                                app.filter_snippets = !app.filter_snippets;
+                                app.apply_filters_and_sort();
+                            }
+                            1 => {
+                                app.sort_order = match app.sort_order {
+                                    crate::app::SortOrder::Default => crate::app::SortOrder::PlaysDesc,
+                                    crate::app::SortOrder::PlaysDesc => crate::app::SortOrder::DurationDesc,
+                                    crate::app::SortOrder::DurationDesc => crate::app::SortOrder::TitleAsc,
+                                    crate::app::SortOrder::TitleAsc => crate::app::SortOrder::Default,
+                                };
+                                app.apply_filters_and_sort();
+                            }
+                            2 => {
+                                app.min_duration_secs = match app.min_duration_secs {
+                                    45 => 60,
+                                    60 => 90,
+                                    90 => 30,
+                                    _ => 45,
+                                };
+                                app.apply_filters_and_sort();
+                            }
+                            3 => {
+                                app.filter_snippets = true;
+                                app.min_duration_secs = 45;
+                                app.sort_order = crate::app::SortOrder::Default;
+                                app.apply_filters_and_sort();
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+                return Ok(());
+            }
+
             // Theme picker popup handling
             if app.theme_picker_open {
                 match key.code {
@@ -135,6 +189,7 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                 KeyCode::Down | KeyCode::Char('j') => app.select_next_item(),
                 KeyCode::Up | KeyCode::Char('k') => app.select_previous_item(),
                 KeyCode::Char('t') => app.theme_picker_open = true,
+                KeyCode::Char('f') | KeyCode::Char('o') => app.filter_modal_open = true,
                 KeyCode::Char('u') => {
                     app.is_setting_user = true;
                     app.user_input.clear();
