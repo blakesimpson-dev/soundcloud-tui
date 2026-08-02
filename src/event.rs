@@ -145,29 +145,28 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                             let client = app.client.clone();
                             let tx = app.command_tx.clone();
 
-                            if handle.starts_with("OAuth ") || handle.starts_with("2-") || (handle.len() > 30 && !handle.contains('/') && !handle.contains(' ')) {
-                                let token = handle.replace("OAuth ", "").trim().to_string();
-                                app.config.oauth_token = Some(token);
-                                app.config.save();
-                                app.status_message = "Saved OAuth Token! Fetching your likes...".to_string();
-                                tokio::spawn(async move {
-                                    if let Ok(tracks) = client.get_my_likes(100).await {
+                            app.config.username_or_url = Some(handle.clone());
+                            app.config.save();
+                            app.status_message = format!("Fetching SoundCloud likes for '{}'...", handle);
+                            tokio::spawn(async move {
+                                if let Ok(user) = client.resolve_user(&handle).await {
+                                    if let Ok(tracks) = client.get_user_likes(user.id, 200).await {
                                         let _ = tx.send(crate::app::AppCommand::UpdateTracks(tracks));
                                     }
-                                });
-                            } else {
-                                app.config.username_or_url = Some(handle.clone());
-                                app.config.save();
-                                app.status_message = format!("Fetching SoundCloud likes for '{}'...", handle);
-                                tokio::spawn(async move {
-                                    if let Ok(user) = client.resolve_user(&handle).await {
-                                        if let Ok(tracks) = client.get_user_likes(user.id, 100).await {
-                                            let _ = tx.send(crate::app::AppCommand::UpdateTracks(tracks));
-                                        }
-                                    }
-                                });
-                            }
+                                }
+                            });
                         }
+                    }
+                    _ => {}
+                }
+                return Ok(());
+            }
+
+            // Help Modal handling
+            if app.help_open {
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
+                        app.help_open = false;
                     }
                     _ => {}
                 }
@@ -182,12 +181,25 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
 
             match key.code {
                 KeyCode::Char('q') => app.should_quit = true,
-                KeyCode::Tab | KeyCode::Char('>') | KeyCode::Char('L') => app.next_view(),
-                KeyCode::BackTab | KeyCode::Char('<') | KeyCode::Char('H') => app.previous_view(),
-                KeyCode::Right | KeyCode::Char('l') => app.next_pane(),
+                KeyCode::Char('?') | KeyCode::Char('H') | KeyCode::F(1) => app.help_open = true,
+                KeyCode::Tab | KeyCode::Char('>') => app.next_view(),
+                KeyCode::BackTab | KeyCode::Char('<') => app.previous_view(),
+                KeyCode::Right | KeyCode::Char('l') => {
+                    if app.active_pane == crate::app::ActivePane::LeftSidebar {
+                        app.current_view = crate::app::RightView::Tracks;
+                        app.active_pane = crate::app::ActivePane::RightMain;
+                    } else {
+                        app.next_pane();
+                    }
+                }
                 KeyCode::Left | KeyCode::Char('h') => app.previous_pane(),
                 KeyCode::Down | KeyCode::Char('j') => app.select_next_item(),
                 KeyCode::Up | KeyCode::Char('k') => app.select_previous_item(),
+                KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Char('L') => {
+                    if let Some(track) = app.currently_playing.as_ref().or(app.tracks.get(app.selected_track_index)) {
+                        let _ = app.command_tx.send(crate::app::AppCommand::ToggleLikeTrack(track.id));
+                    }
+                }
                 KeyCode::Char('t') => app.theme_picker_open = true,
                 KeyCode::Char('f') | KeyCode::Char('o') => app.filter_modal_open = true,
                 KeyCode::Char('u') => {
@@ -200,20 +212,45 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                 }
                 KeyCode::Char('+') | KeyCode::Char('=') => {
                     let cur = app.audio_player.state().volume.load(std::sync::atomic::Ordering::SeqCst);
-                    app.audio_player.set_volume(cur + 5);
+                    let new_vol = (cur + 5).min(100);
+                    app.audio_player.set_volume(new_vol);
+                    app.config.volume = new_vol;
+                    app.config.save();
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => app.play_next_track(),
+                KeyCode::Char('b') | KeyCode::Char('B') => app.play_prev_track(),
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    let target_track = if app.active_pane == crate::app::ActivePane::RightMain && app.current_view == crate::app::RightView::Tracks {
+                        app.tracks.get(app.selected_track_index).cloned()
+                    } else {
+                        app.currently_playing.clone().or_else(|| app.tracks.get(app.selected_track_index).cloned())
+                    };
+
+                    if let Some(track) = target_track {
+                        app.queue.push(track.clone());
+                        app.status_message = format!("Added '{} — {}' to Queue.", track.display_title(), track.display_artist());
+                    }
                 }
                 KeyCode::Char('[') | KeyCode::Char(',') => app.audio_player.seek(-5),
                 KeyCode::Char(']') | KeyCode::Char('.') => app.audio_player.seek(5),
                 KeyCode::Char('-') | KeyCode::Char('_') => {
                     let cur = app.audio_player.state().volume.load(std::sync::atomic::Ordering::SeqCst);
-                    if cur >= 5 {
-                        app.audio_player.set_volume(cur - 5);
-                    }
+                    let new_vol = cur.saturating_sub(5);
+                    app.audio_player.set_volume(new_vol);
+                    app.config.volume = new_vol;
+                    app.config.save();
                 }
                 KeyCode::Enter => {
-                    app.play_selected_track();
+                    if app.active_pane == crate::app::ActivePane::LeftSidebar {
+                        app.current_view = crate::app::RightView::Tracks;
+                        app.active_pane = crate::app::ActivePane::RightMain;
+                    } else if app.current_view == crate::app::RightView::Queue {
+                        app.play_queue_index();
+                    } else {
+                        app.play_selected_track();
+                    }
                 }
-                KeyCode::Char('/') | KeyCode::Char('s') => {
+                KeyCode::Char('/') => {
                     app.is_searching = true;
                     app.search_input.clear();
                 }

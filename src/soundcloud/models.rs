@@ -14,6 +14,7 @@ pub struct Track {
     pub genre: Option<String>,
     pub description: Option<String>,
     pub created_at: Option<String>,
+    pub permalink_url: Option<String>,
 }
 
 impl Track {
@@ -62,17 +63,6 @@ pub struct User {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Playlist {
-    pub id: u64,
-    pub title: Option<String>,
-    pub track_count: Option<u64>,
-    pub tracks: Option<Vec<Track>>,
-    pub artwork_url: Option<String>,
-    pub user: Option<User>,
-    pub description: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Media {
     pub transcodings: Option<Vec<Transcoding>>,
 }
@@ -105,5 +95,12 @@ pub struct SearchCollection<T> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LikeItem {
     pub track: Option<Track>,
+    pub target: Option<Track>,
     pub created_at: Option<String>,
+}
+
+impl LikeItem {
+    pub fn get_track(self) -> Option<Track> {
+        self.track.or(self.target)
+    }
 }

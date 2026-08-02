@@ -11,7 +11,6 @@ pub struct LyricsInfo {
     pub match_type: String,
     pub matched_title: String,
     pub matched_artist: String,
-    pub is_synced: bool,
 }
 
 pub enum AppCommand {
@@ -24,6 +23,7 @@ pub enum AppCommand {
     PrevTrack,
     Seek(i64),
     SetPosition(u64),
+    ToggleLikeTrack(u64),
 }
 
 #[derive(Debug, Clone)]
@@ -55,24 +55,7 @@ pub fn parse_lrc(lrc_str: &str) -> Vec<SyncedLine> {
     lines
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ActiveTab {
-    Library,
-    Likes,
-    Playlists,
-    Search,
-}
 
-impl ActiveTab {
-    pub fn title(&self) -> &'static str {
-        match self {
-            ActiveTab::Library => "Library",
-            ActiveTab::Likes => "Likes",
-            ActiveTab::Playlists => "Playlists",
-            ActiveTab::Search => "Search",
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivePane {
@@ -115,13 +98,6 @@ pub enum SortOrder {
 }
 
 impl SortOrder {
-    pub const ALL: [SortOrder; 4] = [
-        SortOrder::Default,
-        SortOrder::PlaysDesc,
-        SortOrder::DurationDesc,
-        SortOrder::TitleAsc,
-    ];
-
     pub fn label(&self) -> &'static str {
         match self {
             SortOrder::Default => "SoundCloud Order",
@@ -133,13 +109,13 @@ impl SortOrder {
 }
 
 pub struct App {
-    pub active_tab: ActiveTab,
     pub active_pane: ActivePane,
     pub current_view: RightView,
     pub theme: Theme,
     pub available_themes: Vec<Theme>,
     pub theme_picker_open: bool,
     pub theme_picker_selected: usize,
+    pub help_open: bool,
 
     pub tracks: Vec<Track>,
     pub all_fetched_tracks: Vec<Track>,
@@ -157,6 +133,7 @@ pub struct App {
     pub queue: Vec<Track>,
     pub queue_index: usize,
     pub currently_playing: Option<Track>,
+    pub last_playing_index: Option<usize>,
 
     pub search_input: String,
     pub is_searching: bool,
@@ -180,6 +157,7 @@ pub struct App {
     pub user_input: String,
     pub mpris_controls: Option<souvlaki::MediaControls>,
     pub last_mpris_update: std::time::Instant,
+    pub discord_rpc: crate::discord::DiscordRpcManager,
 }
 
 pub fn clean_artist_title(raw_title: &str, raw_artist: &str) -> (String, String) {
@@ -215,8 +193,9 @@ impl App {
             .cloned()
             .unwrap_or_default();
 
-        let client = SoundCloudClient::new(config.oauth_token.clone());
-        let audio_player = AudioPlayer::new();
+        let client = SoundCloudClient::new();
+        let mut audio_player = AudioPlayer::new();
+        audio_player.set_volume(config.volume);
         let (command_tx, command_rx) = unbounded_channel();
 
         let left_items = vec![
@@ -239,13 +218,13 @@ impl App {
         ];
 
         Self {
-            active_tab: ActiveTab::Library,
             active_pane: ActivePane::LeftSidebar,
             current_view: RightView::NowPlaying,
             theme: current_theme,
             available_themes,
             theme_picker_open: false,
             theme_picker_selected: 0,
+            help_open: false,
 
             tracks: Vec::new(),
             all_fetched_tracks: Vec::new(),
@@ -263,6 +242,7 @@ impl App {
             queue: Vec::new(),
             queue_index: 0,
             currently_playing: None,
+            last_playing_index: None,
 
             search_input: String::new(),
             is_searching: false,
@@ -321,15 +301,15 @@ impl App {
                 controls
             },
             last_mpris_update: std::time::Instant::now(),
+            discord_rpc: crate::discord::DiscordRpcManager::new(),
         }
     }
 
     pub fn tick_mpris(&mut self) {
-        if self.last_mpris_update.elapsed() >= std::time::Duration::from_millis(200) {
-            if self.audio_player.state().is_playing.load(std::sync::atomic::Ordering::SeqCst) {
+        if self.last_mpris_update.elapsed() >= std::time::Duration::from_millis(200)
+            && self.audio_player.state().is_playing.load(std::sync::atomic::Ordering::SeqCst) {
                 self.update_mpris_playback();
             }
-        }
     }
 
     pub fn update_mpris_metadata(&mut self) {
@@ -339,7 +319,7 @@ impl App {
                     track.display_title().to_string(),
                     track.display_artist().to_string(),
                     track.get_artwork_url(),
-                    track.duration.map(|ms| std::time::Duration::from_millis(ms)),
+                    track.duration.map(std::time::Duration::from_millis),
                 )
             } else {
                 return;
@@ -379,160 +359,244 @@ impl App {
 
             let _ = controls.set_playback(playback_status);
         }
+        self.update_discord_rpc();
+    }
+
+    pub fn update_discord_rpc(&mut self) {
+        let is_playing = self.audio_player.state().is_playing.load(std::sync::atomic::Ordering::SeqCst);
+        let current_ms = self.audio_player.state().current_millis.load(std::sync::atomic::Ordering::SeqCst);
+        let duration_ms = match &self.currently_playing {
+            Some(t) => t.duration.unwrap_or_else(|| self.audio_player.state().duration_secs.load(std::sync::atomic::Ordering::SeqCst) * 1000),
+            None => 0,
+        };
+        let track = self.currently_playing.as_ref();
+
+        self.discord_rpc.update(track, is_playing, current_ms, duration_ms);
+    }
+
+    pub fn get_queue_tracks(&self) -> Vec<Track> {
+        let mut list = Vec::new();
+        if let Some(t) = &self.currently_playing {
+            list.push(t.clone());
+        }
+        list.extend(self.queue.clone());
+
+        let current_id = self.currently_playing.as_ref().map(|t| t.id);
+        let start_idx = if let Some(cid) = current_id {
+            self.tracks.iter().position(|t| t.id == cid).map(|i| i + 1).unwrap_or(0)
+        } else {
+            self.selected_track_index
+        };
+
+        if !self.tracks.is_empty() {
+            let end = (start_idx + 50).min(self.tracks.len());
+            list.extend(self.tracks[start_idx..end].iter().cloned());
+        }
+        list
+    }
+
+    pub fn play_queue_index(&mut self) {
+        let q_tracks = self.get_queue_tracks();
+        if let Some(track) = q_tracks.get(self.queue_index).cloned() {
+            if let Some(pos) = self.queue.iter().position(|t| t.id == track.id) {
+                self.queue.drain(0..=pos);
+            }
+            if let Some(idx) = self.tracks.iter().position(|t| t.id == track.id) {
+                self.selected_track_index = idx;
+            }
+            self.play_track(track);
+            self.queue_index = 0;
+        }
     }
 
     pub fn play_next_track(&mut self) {
+        if !self.queue.is_empty() {
+            let next_track = self.queue.remove(0);
+            self.play_track(next_track);
+            return;
+        }
+
         if self.tracks.is_empty() {
             return;
         }
-        self.selected_track_index = (self.selected_track_index + 1) % self.tracks.len();
-        self.play_selected_track();
+
+        let base_idx = self.last_playing_index.unwrap_or(self.selected_track_index);
+        let next_idx = (base_idx + 1) % self.tracks.len();
+        self.selected_track_index = next_idx;
+        self.last_playing_index = Some(next_idx);
+        if let Some(track) = self.tracks.get(next_idx).cloned() {
+            self.play_track(track);
+        }
     }
 
     pub fn play_prev_track(&mut self) {
         if self.tracks.is_empty() {
             return;
         }
-        if self.selected_track_index == 0 {
-            self.selected_track_index = self.tracks.len() - 1;
-        } else {
-            self.selected_track_index -= 1;
+        let base_idx = self.last_playing_index.unwrap_or(self.selected_track_index);
+        let prev_idx = if base_idx == 0 { self.tracks.len() - 1 } else { base_idx - 1 };
+        self.selected_track_index = prev_idx;
+        self.last_playing_index = Some(prev_idx);
+        if let Some(track) = self.tracks.get(prev_idx).cloned() {
+            self.play_track(track);
         }
-        self.play_selected_track();
     }
 
     pub fn play_selected_track(&mut self) {
         if let Some(track) = self.tracks.get(self.selected_track_index).cloned() {
-            self.currently_playing = Some(track.clone());
-            self.update_mpris_metadata();
-            self.current_view = crate::app::RightView::NowPlaying;
-            self.current_lyrics = None;
-            self.synced_lyrics.clear();
+            self.last_playing_index = Some(self.selected_track_index);
+            self.play_track(track);
+        }
+    }
 
-            let artwork_url = track.get_artwork_url();
-            let client = self.client.clone();
-            let tx = self.command_tx.clone();
+    pub fn play_track(&mut self, track: Track) {
+        self.currently_playing = Some(track.clone());
+        self.update_mpris_metadata();
+        self.current_lyrics = None;
+        self.synced_lyrics.clear();
 
-            let track_stream = track.clone();
-            tokio::spawn(async move {
-                if let Ok(stream_url) = client.get_stream_url(&track_stream).await {
-                    let _ = tx.send(crate::app::AppCommand::PlayUrl(stream_url));
-                }
-            });
+        self.audio_player.stop();
 
-            if let Some(art_url) = artwork_url {
-                let tx_art = self.command_tx.clone();
-                tokio::spawn(async move {
-                    if let Ok(resp) = reqwest::get(&art_url).await {
-                        if let Ok(bytes) = resp.bytes().await {
-                            let _ = tx_art.send(crate::app::AppCommand::UpdateCoverArt(bytes.to_vec()));
-                        }
-                    }
-                });
+        let artwork_url = track.get_artwork_url();
+        let client = self.client.clone();
+        let tx = self.command_tx.clone();
+
+        let track_stream = track.clone();
+        tokio::spawn(async move {
+            if let Ok(stream_url) = client.get_stream_url(&track_stream).await {
+                let _ = tx.send(crate::app::AppCommand::PlayUrl(stream_url));
             }
+        });
 
-            let tx_lyrics = self.command_tx.clone();
-            let raw_title = track.display_title().to_string();
-            let raw_artist = track.display_artist().to_string();
-            let duration_secs = track.duration.map(|ms| ms / 1000).unwrap_or(0);
-
+        if let Some(art_url) = artwork_url {
+            let tx_art = self.command_tx.clone();
             tokio::spawn(async move {
-                let client = reqwest::Client::builder()
-                    .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                    .build()
-                    .unwrap_or_default();
-
-                let (clean_title, clean_artist) = clean_artist_title(&raw_title, &raw_artist);
-                let mut lyrics_res: Option<(String, LyricsInfo)> = None;
-
-                if duration_secs > 0 {
-                    let url_get = format!(
-                        "https://lrclib.net/api/get?track_name={}&artist_name={}&duration={}",
-                        urlencoding::encode(&clean_title),
-                        urlencoding::encode(&clean_artist),
-                        duration_secs
-                    );
-                    if let Ok(resp) = client.get(&url_get).send().await {
-                        if let Ok(json) = resp.json::<serde_json::Value>().await {
-                            let synced = json.get("syncedLyrics").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
-                            let plain = json.get("plainLyrics").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
-                            if let Some(l) = synced.or(plain) {
-                                let m_title = json.get("trackName").and_then(|v| v.as_str()).unwrap_or(&clean_title).to_string();
-                                let m_artist = json.get("artistName").and_then(|v| v.as_str()).unwrap_or(&clean_artist).to_string();
-                                let info = LyricsInfo {
-                                    provider: "LRCLIB".to_string(),
-                                    match_type: "Direct GET (Exact)".to_string(),
-                                    matched_title: m_title,
-                                    matched_artist: m_artist,
-                                    is_synced: synced.is_some(),
-                                };
-                                lyrics_res = Some((l.to_string(), info));
-                            }
-                        }
+                if let Ok(resp) = reqwest::get(&art_url).await {
+                    if let Ok(bytes) = resp.bytes().await {
+                        let _ = tx_art.send(crate::app::AppCommand::UpdateCoverArt(bytes.to_vec()));
                     }
-                }
-
-                if lyrics_res.is_none() {
-                    let q_str = format!("{} {}", clean_title, clean_artist);
-                    let url_search = format!(
-                        "https://lrclib.net/api/search?q={}",
-                        urlencoding::encode(q_str.trim())
-                    );
-                    if let Ok(resp) = client.get(&url_search).send().await {
-                        if let Ok(json) = resp.json::<serde_json::Value>().await {
-                            if let Some(array) = json.as_array() {
-                                let mut best_synced: Option<(&serde_json::Value, i64)> = None;
-                                let mut best_plain: Option<(&serde_json::Value, i64)> = None;
-
-                                for item in array {
-                                    let item_dur = item.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0) as i64;
-                                    let diff = (item_dur - duration_secs as i64).abs();
-
-                                    let has_synced = item.get("syncedLyrics").and_then(|v| v.as_str()).map_or(false, |s| !s.is_empty());
-                                    let has_plain = item.get("plainLyrics").and_then(|v| v.as_str()).map_or(false, |s| !s.is_empty());
-
-                                    if has_synced {
-                                        if best_synced.map_or(true, |(_, min_diff)| diff < min_diff) {
-                                            best_synced = Some((item, diff));
-                                        }
-                                    } else if has_plain {
-                                        if best_plain.map_or(true, |(_, min_diff)| diff < min_diff) {
-                                            best_plain = Some((item, diff));
-                                        }
-                                    }
-                                }
-
-                                if let Some((item, diff)) = best_synced.or(best_plain) {
-                                    let synced = item.get("syncedLyrics").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
-                                    let plain = item.get("plainLyrics").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
-                                    if let Some(l) = synced.or(plain) {
-                                        let m_title = item.get("trackName").and_then(|v| v.as_str()).unwrap_or(&clean_title).to_string();
-                                        let m_artist = item.get("artistName").and_then(|v| v.as_str()).unwrap_or(&clean_artist).to_string();
-                                        let info = LyricsInfo {
-                                            provider: "LRCLIB".to_string(),
-                                            match_type: format!("Search Fallback (diff: {}s)", diff),
-                                            matched_title: m_title,
-                                            matched_artist: m_artist,
-                                            is_synced: synced.is_some(),
-                                        };
-                                        lyrics_res = Some((l.to_string(), info));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if let Some((lyrics, info)) = lyrics_res {
-                    let _ = tx_lyrics.send(crate::app::AppCommand::UpdateLyrics { lyrics, info });
                 }
             });
         }
+
+        self.fetch_lyrics_for_track(&track);
+    }
+
+    pub fn fetch_lyrics_for_track(&self, track: &Track) {
+        let tx_lyrics = self.command_tx.clone();
+        let raw_title = track.display_title().to_string();
+        let raw_artist = track.display_artist().to_string();
+        let duration_secs = track.duration.map(|ms| ms / 1000).unwrap_or(0);
+
+        tokio::spawn(async move {
+            let client = reqwest::Client::builder()
+                .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .build()
+                .unwrap_or_default();
+
+            let (clean_title, clean_artist) = clean_artist_title(&raw_title, &raw_artist);
+            let mut lyrics_res: Option<(String, LyricsInfo)> = None;
+
+            if duration_secs > 0 {
+                let url_get = format!(
+                    "https://lrclib.net/api/get?track_name={}&artist_name={}&duration={}",
+                    urlencoding::encode(&clean_title),
+                    urlencoding::encode(&clean_artist),
+                    duration_secs
+                );
+                if let Ok(resp) = client.get(&url_get).send().await {
+                    if let Ok(json) = resp.json::<serde_json::Value>().await {
+                        let synced = json.get("syncedLyrics").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+                        let plain = json.get("plainLyrics").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+                        if let Some(l) = synced.or(plain) {
+                            let m_title = json.get("trackName").and_then(|v| v.as_str()).unwrap_or(&clean_title).to_string();
+                            let m_artist = json.get("artistName").and_then(|v| v.as_str()).unwrap_or(&clean_artist).to_string();
+                            let info = LyricsInfo {
+                                provider: "LRCLIB".to_string(),
+                                match_type: "Direct GET (Exact)".to_string(),
+                                matched_title: m_title,
+                                matched_artist: m_artist,
+                            };
+                            lyrics_res = Some((l.to_string(), info));
+                        }
+                    }
+                }
+            }
+
+            if lyrics_res.is_none() {
+                let q_str = format!("{} {}", clean_title, clean_artist);
+                let url_search = format!(
+                    "https://lrclib.net/api/search?q={}",
+                    urlencoding::encode(q_str.trim())
+                );
+                if let Ok(resp) = client.get(&url_search).send().await {
+                    if let Ok(json) = resp.json::<serde_json::Value>().await {
+                        if let Some(array) = json.as_array() {
+                            let mut best_synced: Option<(&serde_json::Value, i64)> = None;
+                            let mut best_plain: Option<(&serde_json::Value, i64)> = None;
+
+                            for item in array {
+                                let item_dur = item.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0) as i64;
+                                let diff = (item_dur - duration_secs as i64).abs();
+
+                                let has_synced = item.get("syncedLyrics").and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty());
+                                let has_plain = item.get("plainLyrics").and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty());
+
+                                if has_synced {
+                                    if best_synced.is_none_or(|(_, min_diff)| diff < min_diff) {
+                                        best_synced = Some((item, diff));
+                                    }
+                                } else if has_plain
+                                    && best_plain.is_none_or(|(_, min_diff)| diff < min_diff) {
+                                        best_plain = Some((item, diff));
+                                    }
+                            }
+
+                            if let Some((item, diff)) = best_synced.or(best_plain) {
+                                let synced = item.get("syncedLyrics").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+                                let plain = item.get("plainLyrics").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+                                if let Some(l) = synced.or(plain) {
+                                    let m_title = item.get("trackName").and_then(|v| v.as_str()).unwrap_or(&clean_title).to_string();
+                                    let m_artist = item.get("artistName").and_then(|v| v.as_str()).unwrap_or(&clean_artist).to_string();
+                                    let info = LyricsInfo {
+                                        provider: "LRCLIB".to_string(),
+                                        match_type: format!("Search Fallback (diff: {}s)", diff),
+                                        matched_title: m_title,
+                                        matched_artist: m_artist,
+                                    };
+                                    lyrics_res = Some((l.to_string(), info));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some((lyrics, info)) = lyrics_res {
+                let _ = tx_lyrics.send(crate::app::AppCommand::UpdateLyrics { lyrics, info });
+            }
+        });
     }
 
     pub fn set_tracks(&mut self, tracks: Vec<Track>) {
         self.all_fetched_tracks = tracks;
+        self.update_artist_list();
         self.apply_filters_and_sort();
+    }
+
+    pub fn update_artist_list(&mut self) {
+        let mut artist_set = std::collections::BTreeSet::new();
+        for track in &self.all_fetched_tracks {
+            let artist = track.display_artist().to_string();
+            if !artist.is_empty() && artist != "Unknown Artist" {
+                artist_set.insert(artist);
+            }
+        }
+
+        let mut items = vec!["All Artists".to_string()];
+        items.extend(artist_set);
+        self.left_items = items;
+        self.selected_left_index = 0;
     }
 
     pub fn apply_filters_and_sort(&mut self) {
@@ -542,46 +606,41 @@ impl App {
             0
         };
 
+        let selected_artist = if self.selected_left_index > 0 && self.selected_left_index < self.left_items.len() {
+            Some(self.left_items[self.selected_left_index].clone())
+        } else {
+            None
+        };
+
         let mut filtered: Vec<Track> = self
             .all_fetched_tracks
             .iter()
             .filter(|t| t.duration.unwrap_or(0) >= min_ms)
+            .filter(|t| {
+                if let Some(artist) = &selected_artist {
+                    t.display_artist() == artist.as_str()
+                } else {
+                    true
+                }
+            })
             .cloned()
             .collect();
 
         match self.sort_order {
             SortOrder::Default => {}
             SortOrder::PlaysDesc => {
-                filtered.sort_by(|a, b| b.playback_count.unwrap_or(0).cmp(&a.playback_count.unwrap_or(0)));
+                filtered.sort_by_key(|b| std::cmp::Reverse(b.playback_count.unwrap_or(0)));
             }
             SortOrder::DurationDesc => {
-                filtered.sort_by(|a, b| b.duration.unwrap_or(0).cmp(&a.duration.unwrap_or(0)));
+                filtered.sort_by_key(|b| std::cmp::Reverse(b.duration.unwrap_or(0)));
             }
             SortOrder::TitleAsc => {
-                filtered.sort_by(|a, b| a.display_title().to_lowercase().cmp(&b.display_title().to_lowercase()));
+                filtered.sort_by_key(|a| a.display_title().to_lowercase());
             }
         }
 
         self.tracks = filtered;
         self.selected_track_index = 0;
-    }
-
-    pub fn next_tab(&mut self) {
-        self.active_tab = match self.active_tab {
-            ActiveTab::Library => ActiveTab::Likes,
-            ActiveTab::Likes => ActiveTab::Playlists,
-            ActiveTab::Playlists => ActiveTab::Search,
-            ActiveTab::Search => ActiveTab::Library,
-        };
-    }
-
-    pub fn previous_tab(&mut self) {
-        self.active_tab = match self.active_tab {
-            ActiveTab::Library => ActiveTab::Search,
-            ActiveTab::Likes => ActiveTab::Library,
-            ActiveTab::Playlists => ActiveTab::Likes,
-            ActiveTab::Search => ActiveTab::Playlists,
-        };
     }
 
     pub fn next_pane(&mut self) {
@@ -618,6 +677,8 @@ impl App {
             ActivePane::LeftSidebar => {
                 if !self.left_items.is_empty() {
                     self.selected_left_index = (self.selected_left_index + 1) % self.left_items.len();
+                    self.apply_filters_and_sort();
+                    self.current_view = RightView::Tracks;
                 }
             }
             ActivePane::RightMain => {
@@ -626,8 +687,9 @@ impl App {
                         self.selected_track_index = (self.selected_track_index + 1) % self.tracks.len();
                     }
                 } else if self.current_view == RightView::Queue {
-                    if !self.queue.is_empty() {
-                        self.queue_index = (self.queue_index + 1) % self.queue.len();
+                    let q_tracks = self.get_queue_tracks();
+                    if !q_tracks.is_empty() {
+                        self.queue_index = (self.queue_index + 1) % q_tracks.len();
                     }
                 }
             }
@@ -643,6 +705,8 @@ impl App {
                     } else {
                         self.selected_left_index -= 1;
                     }
+                    self.apply_filters_and_sort();
+                    self.current_view = RightView::Tracks;
                 }
             }
             ActivePane::RightMain => {
@@ -655,9 +719,10 @@ impl App {
                         }
                     }
                 } else if self.current_view == RightView::Queue {
-                    if !self.queue.is_empty() {
+                    let q_tracks = self.get_queue_tracks();
+                    if !q_tracks.is_empty() {
                         if self.queue_index == 0 {
-                            self.queue_index = self.queue.len() - 1;
+                            self.queue_index = q_tracks.len() - 1;
                         } else {
                             self.queue_index -= 1;
                         }

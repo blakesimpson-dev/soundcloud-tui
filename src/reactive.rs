@@ -14,15 +14,6 @@ pub fn derive_theme(img: &DynamicImage, name: String) -> Theme {
     theme_from_swatches(&swatches, name)
 }
 
-fn nearest_hue(swatches: &[Rgb], target_hue: f32, max_dist: f32) -> Option<Rgb> {
-    swatches
-        .iter()
-        .map(|&c| (c, hue_distance(rgb_to_hsl(c).h, target_hue)))
-        .filter(|&(_, d)| d <= max_dist)
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(c, _)| for_dark_fg(c))
-}
-
 const FULL_TINT_AT: f32 = 0.35;
 
 fn theme_from_swatches(swatches: &[Rgb], name: String) -> Theme {

@@ -8,6 +8,7 @@ pub struct AudioState {
     pub duration_secs: Arc<AtomicU64>,
     pub is_playing: Arc<AtomicBool>,
     pub volume: Arc<AtomicU64>,
+    pub eof_pending: Arc<AtomicBool>,
 }
 
 impl Default for AudioState {
@@ -18,6 +19,7 @@ impl Default for AudioState {
             duration_secs: Arc::new(AtomicU64::new(0)),
             is_playing: Arc::new(AtomicBool::new(false)),
             volume: Arc::new(AtomicU64::new(65)),
+            eof_pending: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -67,15 +69,20 @@ impl AudioPlayer {
     }
 
     pub fn play_url(&mut self, url: &str) -> Result<(), String> {
+        self.state.current_secs.store(0, Ordering::SeqCst);
+        self.state.current_millis.store(0, Ordering::SeqCst);
+        self.state.duration_secs.store(0, Ordering::SeqCst);
+        self.state.eof_pending.store(false, Ordering::SeqCst);
+        self.state.is_playing.store(true, Ordering::SeqCst);
+
         #[cfg(feature = "mpv-backend")]
         if let Some(mpv) = &self.mpv {
             mpv.command("loadfile", &[url, "replace"])
                 .map_err(|e| format!("MPV loadfile error: {e}"))?;
-            self.state.is_playing.store(true, Ordering::SeqCst);
+            let _ = mpv.set_property("pause", "no");
             return Ok(());
         }
 
-        self.state.is_playing.store(true, Ordering::SeqCst);
         Ok(())
     }
 
@@ -126,6 +133,23 @@ impl AudioPlayer {
         }
     }
 
+    pub fn check_and_clear_eof(&self) -> bool {
+        self.state.eof_pending.swap(false, Ordering::SeqCst)
+    }
+
+    pub fn stop(&mut self) {
+        self.state.is_playing.store(false, Ordering::SeqCst);
+        self.state.current_secs.store(0, Ordering::SeqCst);
+        self.state.current_millis.store(0, Ordering::SeqCst);
+        self.state.duration_secs.store(0, Ordering::SeqCst);
+        self.state.eof_pending.store(false, Ordering::SeqCst);
+
+        #[cfg(feature = "mpv-backend")]
+        if let Some(mpv) = &self.mpv {
+            let _ = mpv.command("stop", &[]);
+        }
+    }
+
     pub fn update_ticks(&self) {
         #[cfg(feature = "mpv-backend")]
         if let Some(mpv) = &self.mpv {
@@ -133,11 +157,25 @@ impl AudioPlayer {
                 self.state.current_secs.store(pos as u64, Ordering::SeqCst);
                 self.state.current_millis.store((pos * 1000.0) as u64, Ordering::SeqCst);
             }
-            if let Ok(dur) = mpv.get_property::<f64>("duration") {
-                self.state.duration_secs.store(dur as u64, Ordering::SeqCst);
+            if let Ok(dur_val) = mpv.get_property::<f64>("duration") {
+                self.state.duration_secs.store(dur_val as u64, Ordering::SeqCst);
             }
             if let Ok(pause) = mpv.get_property::<bool>("pause") {
                 self.state.is_playing.store(!pause, Ordering::SeqCst);
+            }
+
+            let is_playing = self.state.is_playing.load(Ordering::SeqCst);
+            let dur = self.state.duration_secs.load(Ordering::SeqCst);
+            let cur = self.state.current_secs.load(Ordering::SeqCst);
+
+            let eof_reached = mpv.get_property::<bool>("eof-reached").unwrap_or(false);
+            if is_playing && dur > 0 && cur > 0 && (eof_reached || cur >= dur.saturating_sub(2)) {
+                self.state.eof_pending.store(true, Ordering::SeqCst);
+                self.state.is_playing.store(false, Ordering::SeqCst);
+                self.state.current_secs.store(0, Ordering::SeqCst);
+                self.state.current_millis.store(0, Ordering::SeqCst);
+                self.state.duration_secs.store(0, Ordering::SeqCst);
+                let _ = mpv.command("stop", &[]);
             }
         }
     }

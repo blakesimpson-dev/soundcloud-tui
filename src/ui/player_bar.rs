@@ -52,7 +52,7 @@ pub fn render_now_strip(app: &App, area: Rect, frame: &mut Frame) {
         vspans.push(Span::styled(ch.to_string(), Style::default().fg(color)));
     }
     vspans.push(Span::styled(
-        format!(" {:>3}%", vol),
+        format!(" {:>4}%", vol),
         Style::default().fg(app.theme.foreground_dim),
     ));
     frame.render_widget(

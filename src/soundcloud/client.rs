@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use regex::Regex;
+use reqwest::header::{HeaderMap, HeaderValue, ORIGIN, REFERER, ACCEPT};
 use serde::de::DeserializeOwned;
 use tokio::sync::RwLock;
 
@@ -11,20 +12,24 @@ pub const SOUNDCLOUD_API_URL: &str = "https://api-v2.soundcloud.com";
 #[derive(Clone)]
 pub struct SoundCloudClient {
     client_id: Arc<RwLock<Option<String>>>,
-    oauth_token: Option<String>,
     http_client: reqwest::Client,
 }
 
 impl SoundCloudClient {
-    pub fn new(oauth_token: Option<String>) -> Self {
+    pub fn new() -> Self {
+        let mut headers = HeaderMap::new();
+        headers.insert(ORIGIN, HeaderValue::from_static("https://soundcloud.com"));
+        headers.insert(REFERER, HeaderValue::from_static("https://soundcloud.com/"));
+        headers.insert(ACCEPT, HeaderValue::from_static("application/json, text/javascript, */*; q=0.1"));
+
         let http_client = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+            .user_agent("Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0")
+            .default_headers(headers)
             .build()
             .unwrap_or_default();
 
         Self {
-            client_id: Arc::new(RwLock::new(None)),
-            oauth_token,
+            client_id: Arc::new(RwLock::new(Some("sUn5toeW5d8MC2jOLpE2yAibTG7RRYsA".to_string()))),
             http_client,
         }
     }
@@ -104,35 +109,24 @@ impl SoundCloudClient {
             req = req.query(&[(k, v)]);
         }
 
-        if let Some(token) = &self.oauth_token {
-            req = req.header("Authorization", format!("OAuth {}", token));
-        }
-
         let resp = req
             .send()
             .await
             .map_err(|e| format!("HTTP request error: {e}"))?;
 
         if resp.status().as_u16() == 401 {
-            // Refresh client ID and retry once
+            // Refresh client ID and retry without OAuth header for public endpoints
             let new_client_id = self.refresh_client_id().await?;
             let mut req2 = self.http_client.get(&url).query(&[("client_id", &new_client_id)]);
             for (k, v) in query_params {
                 req2 = req2.query(&[(k, v)]);
             }
-            if let Some(token) = &self.oauth_token {
-                req2 = req2.header("Authorization", format!("OAuth {}", token));
+            if let Ok(resp2) = req2.send().await {
+                if resp2.status().is_success() {
+                    return resp2.json::<T>().await.map_err(|e| format!("JSON parse error: {e}"));
+                }
             }
-            let resp2 = req2
-                .send()
-                .await
-                .map_err(|e| format!("HTTP retry request error: {e}"))?;
-
-            if !resp2.status().is_success() {
-                return Err(format!("API Error {}: {}", resp2.status(), resp2.text().await.unwrap_or_default()));
-            }
-
-            return resp2.json::<T>().await.map_err(|e| format!("JSON parse error: {e}"));
+            return Err(format!("API Error {}: {}", resp.status(), resp.text().await.unwrap_or_default()));
         }
 
         if !resp.status().is_success() {
@@ -151,7 +145,12 @@ impl SoundCloudClient {
     }
 
     pub async fn resolve_user(&self, username_or_url: &str) -> Result<User, String> {
-        let clean = username_or_url.trim().trim_start_matches('@');
+        let mut clean = username_or_url.trim().trim_start_matches('@');
+        if clean.ends_with("/likes") {
+            clean = &clean[..clean.len() - 6];
+        }
+        let clean = clean.trim_end_matches('/');
+
         let url = if clean.starts_with("http://") || clean.starts_with("https://") {
             clean.to_string()
         } else {
@@ -167,35 +166,24 @@ impl SoundCloudClient {
         res.collection.into_iter().next().ok_or_else(|| format!("User '{}' not found", clean))
     }
 
-    pub async fn search_playlists(&self, query: &str, limit: usize) -> Result<Vec<Playlist>, String> {
-        let limit_str = limit.to_string();
-        let res: SearchCollection<Playlist> = self
-            .get_request("search/playlists", &[("q", query), ("limit", &limit_str)])
-            .await?;
-        Ok(res.collection)
-    }
+
 
     pub async fn get_user_likes(&self, user_id: u64, limit: usize) -> Result<Vec<Track>, String> {
         let limit_str = limit.to_string();
-        let endpoint1 = format!("users/{}/likes/tracks", user_id);
 
-        if let Ok(data) = self.get_request::<SearchCollection<LikeItem>>(&endpoint1, &[("limit", &limit_str)]).await {
-            let tracks: Vec<Track> = data.collection.into_iter().filter_map(|item| item.track).collect();
+        let endpoint_likes = format!("users/{}/likes", user_id);
+        if let Ok(data) = self.get_request::<SearchCollection<LikeItem>>(&endpoint_likes, &[("limit", &limit_str)]).await {
+            let tracks: Vec<Track> = data.collection.into_iter().filter_map(|item| item.get_track()).collect();
             if !tracks.is_empty() {
                 return Ok(tracks);
             }
         }
 
-        if let Ok(data) = self.get_request::<SearchCollection<Track>>(&endpoint1, &[("limit", &limit_str)]).await {
-            if !data.collection.is_empty() {
-                return Ok(data.collection);
-            }
-        }
-
-        let endpoint2 = format!("users/{}/likes", user_id);
-        if let Ok(data) = self.get_request::<SearchCollection<Track>>(&endpoint2, &[("limit", &limit_str)]).await {
-            if !data.collection.is_empty() {
-                return Ok(data.collection);
+        let endpoint1 = format!("users/{}/likes/tracks", user_id);
+        if let Ok(data) = self.get_request::<SearchCollection<LikeItem>>(&endpoint1, &[("limit", &limit_str)]).await {
+            let tracks: Vec<Track> = data.collection.into_iter().filter_map(|item| item.get_track()).collect();
+            if !tracks.is_empty() {
+                return Ok(tracks);
             }
         }
 
@@ -204,15 +192,6 @@ impl SoundCloudClient {
             .get_request(&endpoint_tracks, &[("limit", &limit_str)])
             .await?;
         Ok(res_tracks.collection)
-    }
-
-    pub async fn get_my_likes(&self, limit: usize) -> Result<Vec<Track>, String> {
-        let limit_str = limit.to_string();
-        let res: SearchCollection<LikeItem> = self
-            .get_request("me/likes/tracks", &[("limit", &limit_str)])
-            .await?;
-        let tracks = res.collection.into_iter().filter_map(|item| item.track).collect();
-        Ok(tracks)
     }
 
     pub async fn get_stream_url(&self, track: &Track) -> Result<String, String> {

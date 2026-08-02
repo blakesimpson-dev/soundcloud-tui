@@ -1,8 +1,8 @@
 use ratatui::{
-    layout::Rect,
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
@@ -36,7 +36,7 @@ pub fn render_lyrics_view(app: &App, area: Rect, frame: &mut Frame) {
                 Span::styled(" [ ", Style::default().fg(app.theme.border)),
                 Span::styled(format!("Backend: {}", info.provider), Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)),
                 Span::styled(" • ", Style::default().fg(app.theme.border)),
-                Span::styled(format!("{}", info.match_type), Style::default().fg(app.theme.primary)),
+                Span::styled(info.match_type.to_string(), Style::default().fg(app.theme.primary)),
                 Span::styled(" • ", Style::default().fg(app.theme.border)),
                 Span::styled(format!("Matched: {} - {}", info.matched_artist, info.matched_title), Style::default().fg(app.theme.foreground)),
                 Span::styled(" ]", Style::default().fg(app.theme.border)),
@@ -109,21 +109,8 @@ pub fn render_lyrics_view(app: &App, area: Rect, frame: &mut Frame) {
                     .fg(app.theme.primary)
                     .add_modifier(Modifier::BOLD),
             )),
+            Line::from(""),
         ];
-
-        if let Some(info) = &app.current_lyrics_info {
-            lyrics_lines.push(Line::from(vec![
-                Span::styled(" [ ", Style::default().fg(app.theme.border)),
-                Span::styled(format!("Backend: {}", info.provider), Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)),
-                Span::styled(" • ", Style::default().fg(app.theme.border)),
-                Span::styled(format!("{}", info.match_type), Style::default().fg(app.theme.primary)),
-                Span::styled(" • ", Style::default().fg(app.theme.border)),
-                Span::styled(format!("Matched: {} - {}", info.matched_artist, info.matched_title), Style::default().fg(app.theme.foreground)),
-                Span::styled(" ]", Style::default().fg(app.theme.border)),
-            ]));
-        }
-
-        lyrics_lines.push(Line::from(""));
 
         for (idx, line) in lines.iter().enumerate() {
             let dist = (idx as i64 - active_idx as i64).abs();
@@ -165,35 +152,99 @@ pub fn render_lyrics_view(app: &App, area: Rect, frame: &mut Frame) {
 pub fn render_queue_view(app: &App, area: Rect, frame: &mut Frame) {
     let is_focused = app.active_pane == ActivePane::RightMain;
 
-    let items: Vec<ListItem> = if app.queue.is_empty() {
-        vec![
-            ListItem::new("▶ Everything Is Burning — IAMX"),
-            ListItem::new("  Oh Cruel Darkness Embrace Me — IAMX"),
-            ListItem::new("  Dead In This House — IAMX"),
-            ListItem::new("  Triggers — IAMX"),
-            ListItem::new("  Scars — IAMX"),
-        ]
-    } else {
-        app.queue
-            .iter()
-            .enumerate()
-            .map(|(idx, track)| {
-                let prefix = if idx == app.queue_index { "▶ " } else { "  " };
-                let style = if is_focused && idx == app.queue_index {
-                    Style::default().fg(app.theme.selection_fg).bg(app.theme.selection_bg).add_modifier(Modifier::BOLD)
-                } else if idx == app.queue_index {
-                    Style::default().fg(app.theme.primary)
-                } else {
-                    Style::default().fg(app.theme.foreground)
-                };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(5)])
+        .split(area);
 
-                ListItem::new(Line::from(vec![
-                    Span::styled(prefix, Style::default().fg(app.theme.primary)),
-                    Span::styled(format!("{} — {}", track.display_title(), track.display_artist()), style),
-                ]))
-            })
-            .collect()
-    };
+    let state = app.audio_player.state();
+    let current_secs = state.current_secs.load(std::sync::atomic::Ordering::SeqCst);
+    let duration_secs = state.duration_secs.load(std::sync::atomic::Ordering::SeqCst);
+    let rem_secs = duration_secs.saturating_sub(current_secs);
+
+    let q_tracks = app.get_queue_tracks();
+
+    let mut total_queue_secs = 0;
+    for (idx, track) in q_tracks.iter().enumerate() {
+        let dur = track.duration.map(|ms| ms / 1000).unwrap_or(0);
+        if idx == 0 && app.currently_playing.is_some() {
+            total_queue_secs += rem_secs;
+        } else {
+            total_queue_secs += dur;
+        }
+    }
+
+    let summary_line1 = Line::from(vec![
+        Span::styled(" PLAYBACK QUEUE ", Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)),
+        Span::styled("• ", Style::default().fg(app.theme.border)),
+        Span::styled(format!("{} Custom Queued ", app.queue.len()), Style::default().fg(app.theme.foreground)),
+        Span::styled("• ", Style::default().fg(app.theme.border)),
+        Span::styled(format!("{} Total Upcoming ", q_tracks.len().saturating_sub(1)), Style::default().fg(app.theme.foreground_dim)),
+    ]);
+
+    let summary_line2 = Line::from(vec![
+        Span::styled(" Estimated Time Remaining: ", Style::default().fg(app.theme.foreground_dim)),
+        Span::styled(
+            format!("{:02}m {:02}s", total_queue_secs / 60, total_queue_secs % 60),
+            Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("  (Use 'j'/'k' to scroll • Press 'Enter' to play selected track)", Style::default().fg(app.theme.border)),
+    ]);
+
+    let summary_widget = Paragraph::new(vec![summary_line1, summary_line2])
+        .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(app.theme.border)));
+    frame.render_widget(summary_widget, chunks[0]);
+
+    let mut items: Vec<ListItem> = Vec::new();
+    let mut accum_time = rem_secs;
+
+    let has_now_playing = app.currently_playing.is_some();
+    let queue_count = app.queue.len();
+
+    for (idx, track) in q_tracks.iter().enumerate() {
+        let is_selected = is_focused && idx == app.queue_index;
+        let track_dur = track.duration.map(|ms| ms / 1000).unwrap_or(0);
+        let dur_str = format!("{:02}:{:02}", track_dur / 60, track_dur % 60);
+
+        let (badge, badge_style) = if has_now_playing && idx == 0 {
+            (" ▶ NOW PLAYING  ", Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD))
+        } else if idx > 0 && idx <= queue_count {
+            (" ★ QUEUED       ", Style::default().fg(app.theme.primary))
+        } else {
+            (" ↓ UPCOMING     ", Style::default().fg(app.theme.foreground_dim))
+        };
+
+        let in_time_str = if has_now_playing && idx == 0 {
+            format!("Remaining {:02}m {:02}s", rem_secs / 60, rem_secs % 60)
+        } else {
+            let res = format!("In {:02}m {:02}s", accum_time / 60, accum_time % 60);
+            accum_time += track_dur;
+            res
+        };
+
+        let style = if is_selected {
+            Style::default().fg(app.theme.selection_fg).bg(app.theme.selection_bg).add_modifier(Modifier::BOLD)
+        } else if has_now_playing && idx == 0 {
+            Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(app.theme.foreground)
+        };
+
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled(badge, badge_style),
+            Span::styled(format!("{:<32}", track.display_title()), style),
+            Span::styled(format!(" {} ", track.display_artist()), Style::default().fg(app.theme.foreground_dim)),
+            Span::styled(format!("• {} ", dur_str), Style::default().fg(app.theme.foreground_dim)),
+            Span::styled(format!("• {}", in_time_str), Style::default().fg(app.theme.border)),
+        ])));
+    }
+
+    if items.is_empty() {
+        items.push(ListItem::new(Span::styled(
+            "No upcoming tracks in queue or library.",
+            Style::default().fg(app.theme.foreground_dim),
+        )));
+    }
 
     let mut state = ListState::default();
     state.select(Some(app.queue_index));
@@ -205,5 +256,5 @@ pub fn render_queue_view(app: &App, area: Rect, frame: &mut Frame) {
                 .bg(app.theme.selection_bg),
         );
 
-    frame.render_stateful_widget(list, area, &mut state);
+    frame.render_stateful_widget(list, chunks[1], &mut state);
 }

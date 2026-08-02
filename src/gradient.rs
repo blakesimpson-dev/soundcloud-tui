@@ -33,37 +33,4 @@ impl From<Rgb> for Color {
     }
 }
 
-#[inline]
-fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
-    let a = f32::from(a);
-    let b = f32::from(b);
-    (a + (b - a) * t).round().clamp(0.0, 255.0) as u8
-}
 
-pub fn lerp_color(a: Rgb, b: Rgb, t: f32) -> Rgb {
-    let t = t.clamp(0.0, 1.0);
-    Rgb::new(
-        lerp_u8(a.r, b.r, t),
-        lerp_u8(a.g, b.g, t),
-        lerp_u8(a.b, b.b, t),
-    )
-}
-
-pub fn interpolate(stops: &[Rgb], t: f32) -> Rgb {
-    match stops {
-        [] => Rgb::new(0, 0, 0),
-        [only] => *only,
-        _ => {
-            if t <= 0.0 {
-                return stops[0];
-            }
-            if t >= 1.0 {
-                return stops[stops.len() - 1];
-            }
-            let segment = t * (stops.len() - 1) as f32;
-            let i = segment.floor() as usize;
-            let local_t = segment - i as f32;
-            lerp_color(stops[i], stops[i + 1], local_t)
-        }
-    }
-}

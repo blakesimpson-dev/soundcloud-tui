@@ -16,7 +16,7 @@ use crate::app::{App, RightView};
 use library::{render_center_tracks, render_left_sidebar};
 use nowplaying::render_nowplaying_view;
 use player_bar::render_now_strip;
-use popup::{render_filter_popup, render_search_popup, render_theme_popup, render_user_popup};
+use popup::{render_filter_popup, render_help_popup, render_search_popup, render_theme_popup, render_user_popup};
 use queue::{render_lyrics_view, render_queue_view};
 
 pub fn render(app: &App, frame: &mut Frame) {
@@ -47,6 +47,7 @@ pub fn render(app: &App, frame: &mut Frame) {
     render_search_popup(app, frame);
     render_user_popup(app, frame);
     render_filter_popup(app, frame);
+    render_help_popup(app, frame);
 }
 
 fn render_header(app: &App, area: Rect, frame: &mut Frame) {

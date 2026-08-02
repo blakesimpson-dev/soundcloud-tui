@@ -2,6 +2,7 @@ mod app;
 mod audio;
 mod color;
 mod config;
+mod discord;
 mod event;
 mod gradient;
 mod reactive;
@@ -40,36 +41,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Perform initial SoundCloud tracks fetch in background based on config
     let client = app.client.clone();
     let tx = app.command_tx.clone();
-    let oauth = app.config.oauth_token.clone();
-    let user_config = app.config.username_or_url.clone();
+    let user_config = app.config.username_or_url.clone().unwrap_or_else(|| "soundcloud".to_string());
 
-    if let Some(_token) = oauth {
-        tokio::spawn(async move {
-            if let Ok(tracks) = client.get_my_likes(50).await {
-                let _ = tx.send(app::AppCommand::UpdateTracks(tracks));
-            }
-        });
-    } else if let Some(user) = user_config {
-        tokio::spawn(async move {
-            if let Ok(u) = client.resolve_user(&user).await {
-                if let Ok(tracks) = client.get_user_likes(u.id, 50).await {
+    tokio::spawn(async move {
+        if let Ok(u) = client.resolve_user(&user_config).await {
+            if let Ok(tracks) = client.get_user_likes(u.id, 200).await {
+                if !tracks.is_empty() {
                     let _ = tx.send(app::AppCommand::UpdateTracks(tracks));
+                    return;
                 }
             }
-        });
-    } else {
-        // Automatically prompt user on first launch
-        app.is_setting_user = true;
-        tokio::spawn(async move {
-            if let Ok(tracks) = client.search_tracks("SoFaygo", 50).await {
-                let _ = tx.send(app::AppCommand::UpdateTracks(tracks));
-            }
-        });
-    }
+        }
+
+        if let Ok(tracks) = client.search_tracks("SoFaygo", 50).await {
+            let _ = tx.send(app::AppCommand::UpdateTracks(tracks));
+        }
+    });
 
     // Main TUI render loop
     loop {
         app.audio_player.update_ticks();
+        if app.audio_player.check_and_clear_eof() {
+            app.play_next_track();
+        }
         
         while let Ok(cmd) = app.command_rx.try_recv() {
             match cmd {
@@ -118,6 +112,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 app::AppCommand::SetPosition(ms) => {
                     app.audio_player.seek_absolute(ms);
                     app.update_mpris_playback();
+                }
+
+                app::AppCommand::ToggleLikeTrack(_track_id) => {
+                    app.status_message = "Track actions (like/unlike) disabled in clean read-only mode.".to_string();
                 }
             }
         }

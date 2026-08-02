@@ -65,7 +65,7 @@ pub fn render_search_popup(app: &App, frame: &mut Frame) {
 
     let block = Block::default()
         .title(title_line)
-        .title(Line::from(right_hint).alignment(ratatui::layout::Alignment::Right))
+        .title(right_hint.alignment(ratatui::layout::Alignment::Right))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.primary))
         .style(Style::default().bg(app.theme.background));
@@ -113,7 +113,7 @@ pub fn render_user_popup(app: &App, frame: &mut Frame) {
 
     let block = Block::default()
         .title(title_line)
-        .title(Line::from(right_hint).alignment(ratatui::layout::Alignment::Right))
+        .title(right_hint.alignment(ratatui::layout::Alignment::Right))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.primary))
         .style(Style::default().bg(app.theme.background));
@@ -209,12 +209,10 @@ pub fn render_filter_popup(app: &App, frame: &mut Frame) {
     let snippet_status = if app.filter_snippets { "[ON] (Hide < 45s)" } else { "[OFF] (Show all)" };
     let sort_status = app.sort_order.label();
 
-    let filter_options = vec![
-        format!("1. Hide Snippets / Samples: {}", snippet_status),
+    let filter_options = [format!("1. Hide Snippets / Samples: {}", snippet_status),
         format!("2. Sort Order: {}", sort_status),
         format!("3. Min Duration Cutoff: {}s", app.min_duration_secs),
-        format!("4. Reset Filters to Defaults"),
-    ];
+        "4. Reset Filters to Defaults".to_string()];
 
     let items: Vec<ListItem> = filter_options
         .iter()
@@ -251,4 +249,107 @@ pub fn render_filter_popup(app: &App, frame: &mut Frame) {
         );
 
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+pub fn render_help_popup(app: &App, frame: &mut Frame) {
+    if !app.help_open {
+        return;
+    }
+
+    let area = top_centered_rect(70, 22, frame.area());
+    frame.render_widget(Clear, area);
+
+    let title_line = Line::from(vec![
+        Span::styled(" SoundCloud TUI Help & Controls ", Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)),
+    ]);
+
+    let right_hint = Line::from(vec![
+        Span::styled("[ESC]", Style::default().fg(app.theme.foreground_dim)),
+        Span::styled(" or ", Style::default().fg(app.theme.border)),
+        Span::styled("[?]", Style::default().fg(app.theme.primary)),
+        Span::styled(" close ", Style::default().fg(app.theme.foreground_dim)),
+    ]);
+
+    let block = Block::default()
+        .title(title_line)
+        .title(right_hint.alignment(ratatui::layout::Alignment::Right))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.primary))
+        .style(Style::default().bg(app.theme.background));
+
+    let help_lines = vec![
+        Line::from(vec![
+            Span::styled("  PLAYBACK CONTROLS", Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Space    ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Play / Pause audio playback", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  n / N    ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Skip to Next track in queue or library", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  b / B    ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Skip to Previous track in queue or library", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  + / -    ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Increase / Decrease volume (auto-saved)", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  NAVIGATION & QUEUE", Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("  j / k    ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Navigate up / down items (Vim keys)", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  h / l    ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Switch pane focus (Sidebar / Main View)", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  a        ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Add highlighted track to Queue", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Tab / <> ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Switch views (Now Playing, Lyrics, Queue, Tracks)", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  FEATURES & CONFIG", Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("  /        ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Instant search SoundCloud tracks & artists", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  u        ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Set SoundCloud user handle / profile URL", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  t        ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Theme picker (Monochrome, Sunset, Cyber, etc.)", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  f        ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Filter / Sort options modal", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  CREDITS", Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Inspired by ", Style::default().fg(app.theme.foreground_dim)),
+            Span::styled("github.com/HaseebKhalid1507/Myx", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+        ]),
+    ];
+
+    let p = Paragraph::new(help_lines)
+        .block(block)
+        .alignment(ratatui::layout::Alignment::Left);
+
+    frame.render_widget(p, area);
 }
