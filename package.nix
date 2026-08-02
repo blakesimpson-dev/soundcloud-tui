@@ -1,9 +1,10 @@
 {
   lib,
-  stdenv,
   rustPlatform,
-  pkgs,
-  ...
+  pkg-config,
+  openssl,
+  dbus,
+  mpv,
 }:
 
 rustPlatform.buildRustPackage (finalAttrs: {
@@ -12,18 +13,21 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   src = ./.;
 
-  cargoHash = "";
+  cargoHash = "sha256-JB7Kj2X6nGN3qLf69KP94NN1uLXUXFWI9Zm+UAMMe2I=";
 
   nativeBuildInputs = [
-    stdenv.cc
-    pkgs.pkg-config
+    pkg-config
+  ];
+
+  buildInputs = [
+    openssl
+    dbus
+    mpv
   ];
 
   meta = {
     description = "A TUI for soundcloud";
     homepage = "https://github.com/Mvkweb/soundcloud-tui";
-    lincese = lib.licenses.unlicense;
-    maintainers = [ lib.maintainers.Mvkweb ];
+    license = lib.licenses.unlicense;
   };
-
 })
