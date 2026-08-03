@@ -18,6 +18,29 @@ cd soundcloud-tui
 cargo install --path .
 ```
 
+### Nix
+
+You can run the tui directly via `nix run`:
+
+```sh
+nix run github:Mvkweb/soundcloud-tui
+```
+
+or add it to your system configuration
+
+```nix
+  {
+    inputs = {
+      nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+
+      soundcloud-tui = {
+        url = "github:Mvkweb/soundcloud-tui";
+        inputs.nixpkgs.follows = "nixpkgs";
+      };
+    };
+  }
+```
+
 Ensure `~/.cargo/bin` is in your `$PATH`.
 
 ## Usage
