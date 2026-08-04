@@ -148,9 +148,4 @@ impl DiscordRpcManager {
         }
     }
 
-    pub fn clear(&mut self) {
-        if let Some(client) = &mut self.client {
-            let _ = client.clear_activity();
-        }
-    }
 }
