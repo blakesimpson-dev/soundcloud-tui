@@ -23,12 +23,13 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        selfPackage = pkgs.callPackage ./package.nix { };
       in
       {
-        packages.default = pkgs.callPackage ./package.nix { };
+        packages.default = selfPackage;
 
         devShells.default = pkgs.mkShell {
-          inputsFrom = [ pkgs.callPackage ./package.nix { } ];
+          inputsFrom = [ selfPackage ];
           packages = [
             pkgs.stdenv.cc
             pkgs.cargo
