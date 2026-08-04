@@ -23,20 +23,32 @@ or add it to your system configuration
     inputs = {
       nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 
-      soundcloud-tui = {
-        url = "github:Mvkweb/soundcloud-tui";
-        inputs.nixpkgs.follows = "nixpkgs";
-      };
+      soundcloud-tui.url = "github:Mvkweb/soundcloud-tui";
     };
   }
 ```
+
+### Add the package to environment.systemPackages inside your configuration.nix:
+```nix
+{ pkgs, inputs, ... }: {
+  environment.systemPackages = [
+    inputs.soundcloud-tui.packages.${pkgs.system}.default
+  ];
+}
+ ```
+
+### Rebuild your system
+
+```
+sudo nixos-rebuild switch
+````
 
 ## Installation
 
 Clone the repository and install:
 
 ```bash
-git clone https://github.com/opensoundcloud/soundcloud-tui.git
+git clone https://github.com/Mvkweb/soundcloud-tui.git
 cd soundcloud-tui
 cargo install --path .
 ```
