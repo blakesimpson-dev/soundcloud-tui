@@ -8,6 +8,29 @@ A terminal SoundCloud client written in Rust.
 sudo pacman -S mpv
 ```
 
+## Nix
+
+You can run the tui directly via `nix run`:
+
+```sh
+nix run github:Mvkweb/soundcloud-tui
+```
+
+or add it to your system configuration
+
+```nix
+  {
+    inputs = {
+      nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+
+      soundcloud-tui = {
+        url = "github:Mvkweb/soundcloud-tui";
+        inputs.nixpkgs.follows = "nixpkgs";
+      };
+    };
+  }
+```
+
 ## Installation
 
 Clone the repository and install:
@@ -19,6 +42,7 @@ cargo install --path .
 ```
 
 Ensure `~/.cargo/bin` is in your `$PATH`.
+
 
 ## Usage
 

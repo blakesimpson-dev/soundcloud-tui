@@ -1,0 +1,23 @@
+name: Build and cache
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: nixbuild/nix-quick-install-action@v28
+
+    - uses: cachix/cachix-action@v15
+      with:
+        name: soundcloud-tui
+        authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+    - name: Build Flake Package
+      run: nix build .#
