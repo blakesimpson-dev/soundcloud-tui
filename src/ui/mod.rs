@@ -16,7 +16,10 @@ use crate::app::{App, RightView};
 use library::{render_center_tracks, render_left_sidebar};
 use nowplaying::render_nowplaying_view;
 use player_bar::render_now_strip;
-use popup::{render_filter_popup, render_help_popup, render_search_popup, render_theme_popup, render_user_popup};
+use popup::{
+    render_filter_popup, render_help_popup, render_search_popup, render_theme_popup,
+    render_user_popup,
+};
 use queue::{render_lyrics_view, render_queue_view};
 
 pub fn render(app: &App, frame: &mut Frame) {
@@ -67,10 +70,16 @@ fn render_header(app: &App, area: Rect, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(wordmark), area);
 
     // View Tabs (Right Aligned)
-    let mut spans = vec![Span::styled("←→ ", Style::default().fg(app.theme.foreground_dim))];
+    let mut spans = vec![Span::styled(
+        "←→ ",
+        Style::default().fg(app.theme.foreground_dim),
+    )];
     for (i, v) in RightView::ALL.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::styled(" · ", Style::default().fg(app.theme.foreground_dim)));
+            spans.push(Span::styled(
+                " · ",
+                Style::default().fg(app.theme.foreground_dim),
+            ));
         }
         let style = if *v == app.current_view {
             Style::default()
@@ -111,6 +120,8 @@ fn render_footer(app: &App, area: Rect, frame: &mut Frame) {
         Span::styled("pane  ", Style::default().fg(app.theme.foreground_dim)),
         Span::styled("←→ ", Style::default().fg(app.theme.primary)),
         Span::styled("view  ", Style::default().fg(app.theme.foreground_dim)),
+        Span::styled("r ", Style::default().fg(app.theme.primary)),
+        Span::styled("loop  ", Style::default().fg(app.theme.foreground_dim)),
         Span::styled("/ ", Style::default().fg(app.theme.primary)),
         Span::styled("search  ", Style::default().fg(app.theme.foreground_dim)),
         Span::styled("␣ ", Style::default().fg(app.theme.primary)),

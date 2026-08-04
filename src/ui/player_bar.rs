@@ -19,6 +19,7 @@ pub fn render_now_strip(app: &App, area: Rect, frame: &mut Frame) {
     let current_secs = state.current_secs.load(Ordering::SeqCst);
     let duration_secs = state.duration_secs.load(Ordering::SeqCst).max(1);
     let vol = state.volume.load(Ordering::SeqCst);
+    let loop_enabled = state.loop_enabled.load(Ordering::SeqCst);
 
     // Row 1: Track title & Volume meter on far right
     let (track_title, artist_name) = if let Some(track) = &app.currently_playing {
@@ -37,6 +38,11 @@ pub fn render_now_strip(app: &App, area: Rect, frame: &mut Frame) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(artist_name, Style::default().fg(app.theme.foreground_dim)),
+        if loop_enabled {
+            Span::styled("  [LOOP] ", Style::default().fg(app.theme.foreground_dim))
+        } else {
+            Span::styled(" ", Style::default().fg(app.theme.foreground_dim))
+        },
     ]);
     frame.render_widget(Paragraph::new(title_line), rows[0]);
 
@@ -70,10 +76,22 @@ pub fn render_now_strip(app: &App, area: Rect, frame: &mut Frame) {
     let filled_bar = (ratio * bar_w as f32) as usize;
     let empty_bar = bar_w.saturating_sub(filled_bar);
 
-    let mut spans = vec![Span::styled(left_str, Style::default().fg(app.theme.foreground_dim))];
-    spans.push(Span::styled("━".repeat(filled_bar), Style::default().fg(app.theme.primary)));
-    spans.push(Span::styled("━".repeat(empty_bar), Style::default().fg(app.theme.border)));
-    spans.push(Span::styled(right_str, Style::default().fg(app.theme.foreground_dim)));
+    let mut spans = vec![Span::styled(
+        left_str,
+        Style::default().fg(app.theme.foreground_dim),
+    )];
+    spans.push(Span::styled(
+        "━".repeat(filled_bar),
+        Style::default().fg(app.theme.primary),
+    ));
+    spans.push(Span::styled(
+        "━".repeat(empty_bar),
+        Style::default().fg(app.theme.border),
+    ));
+    spans.push(Span::styled(
+        right_str,
+        Style::default().fg(app.theme.foreground_dim),
+    ));
 
     frame.render_widget(Paragraph::new(Line::from(spans)), rows[1]);
 }
