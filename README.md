@@ -8,17 +8,7 @@ A terminal SoundCloud client written in Rust.
 sudo pacman -S mpv
 ```
 
-## Installation
-
-Clone the repository and install:
-
-```bash
-git clone https://github.com/opensoundcloud/soundcloud-tui.git
-cd soundcloud-tui
-cargo install --path .
-```
-
-### Nix
+## Nix
 
 You can run the tui directly via `nix run`:
 
@@ -41,7 +31,18 @@ or add it to your system configuration
   }
 ```
 
+## Installation
+
+Clone the repository and install:
+
+```bash
+git clone https://github.com/opensoundcloud/soundcloud-tui.git
+cd soundcloud-tui
+cargo install --path .
+```
+
 Ensure `~/.cargo/bin` is in your `$PATH`.
+
 
 ## Usage
 
