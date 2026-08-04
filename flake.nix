@@ -28,6 +28,7 @@
         packages.default = pkgs.callPackage ./package.nix { };
 
         devShells.default = pkgs.mkShell {
+          inputsFrom = [ pkgs.callPackage ./package.nix { } ];
           packages = [
             pkgs.stdenv.cc
             pkgs.cargo
@@ -37,7 +38,6 @@
             pkgs.rust-analyzer
           ];
         };
-
-             }
+      }
     );
 }
