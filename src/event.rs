@@ -210,6 +210,9 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                     app.audio_player.toggle_pause();
                     app.update_mpris_playback();
                 }
+                KeyCode::Char('r') => {
+                    app.audio_player.toggle_loop();
+                }
                 KeyCode::Char('+') | KeyCode::Char('=') => {
                     let cur = app.audio_player.state().volume.load(std::sync::atomic::Ordering::SeqCst);
                     let new_vol = (cur + 5).min(100);

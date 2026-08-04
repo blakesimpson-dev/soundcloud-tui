@@ -8,3 +8,5 @@
 .DS_Store
 result
 TODO.md
+.envrc
+.direnv/

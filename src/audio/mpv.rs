@@ -7,6 +7,7 @@ pub struct AudioState {
     pub current_millis: Arc<AtomicU64>,
     pub duration_secs: Arc<AtomicU64>,
     pub is_playing: Arc<AtomicBool>,
+    pub loop_enabled: Arc<AtomicBool>,
     pub volume: Arc<AtomicU64>,
     pub eof_pending: Arc<AtomicBool>,
 }
@@ -18,6 +19,7 @@ impl Default for AudioState {
             current_millis: Arc::new(AtomicU64::new(0)),
             duration_secs: Arc::new(AtomicU64::new(0)),
             is_playing: Arc::new(AtomicBool::new(false)),
+            loop_enabled: Arc::new(AtomicBool::new(false)),
             volume: Arc::new(AtomicU64::new(65)),
             eof_pending: Arc::new(AtomicBool::new(false)),
         }
@@ -98,6 +100,19 @@ impl AudioPlayer {
         }
     }
 
+    pub fn toggle_loop(&mut self) {
+        let cur = self.state.loop_enabled.load(Ordering::SeqCst);
+        let next = !cur;
+        self.state.loop_enabled.store(next, Ordering::SeqCst);
+    
+        #[cfg(feature = "mpv-backend")]
+        if let Some(mpv) = &self.mpv {
+            let loop_val = if next { "inf" } else { "no" }; // DEBUG
+            let _ = mpv.set_property("loop-file",loop_val);
+        }
+        
+    }
+
     pub fn set_volume(&mut self, volume: u64) {
         let vol = volume.min(100);
         self.state.volume.store(vol, Ordering::SeqCst);
@@ -107,6 +122,7 @@ impl AudioPlayer {
             let _ = mpv.set_property("volume", vol as i64);
         }
     }
+
 
     pub fn seek(&mut self, seconds: i64) {
         let cur_ms = self.state.current_millis.load(Ordering::SeqCst) as i64;
@@ -167,9 +183,10 @@ impl AudioPlayer {
             let is_playing = self.state.is_playing.load(Ordering::SeqCst);
             let dur = self.state.duration_secs.load(Ordering::SeqCst);
             let cur = self.state.current_secs.load(Ordering::SeqCst);
+            let is_loop_enabled = self.state.loop_enabled.load(Ordering::SeqCst);
 
             let eof_reached = mpv.get_property::<bool>("eof-reached").unwrap_or(false);
-            if is_playing && dur > 0 && cur > 0 && (eof_reached || cur >= dur.saturating_sub(2)) {
+            if is_playing && dur > 0 && cur > 0 && !is_loop_enabled &&(eof_reached || cur >= dur.saturating_sub(2)) {
                 self.state.eof_pending.store(true, Ordering::SeqCst);
                 self.state.is_playing.store(false, Ordering::SeqCst);
                 self.state.current_secs.store(0, Ordering::SeqCst);
