@@ -1,0 +1,14 @@
+{
+    "name": "Tokyo Night Light",
+    "dark": false,
+    "primary": "#345494",
+    "background": "#e4e6eb",
+    "foreground": "#343b58",
+    "foreground_dim": "#6c759e",
+    "border": "#c4c9d9",
+    "border_focused": "#345494",
+    "selection_bg": "#d5d8e0",
+    "selection_fg": "#345494",
+    "progress_fill": "#345494",
+    "progress_track": "#c4c9d9"
+}

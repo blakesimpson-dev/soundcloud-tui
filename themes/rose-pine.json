@@ -1,0 +1,14 @@
+{
+    "name": "Rosé Pine",
+    "dark": true,
+    "primary": "#c4a7e7",
+    "background": "#191724",
+    "foreground": "#e0def4",
+    "foreground_dim": "#6e6a86",
+    "border": "#26233a",
+    "border_focused": "#c4a7e7",
+    "selection_bg": "#1f1d2e",
+    "selection_fg": "#c4a7e7",
+    "progress_fill": "#c4a7e7",
+    "progress_track": "#26233a"
+}

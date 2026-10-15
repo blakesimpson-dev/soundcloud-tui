@@ -1,0 +1,14 @@
+{
+    "name": "Light",
+    "dark": false,
+    "primary": "#ff5500",
+    "background": "#fafafa",
+    "foreground": "#141414",
+    "foreground_dim": "#787878",
+    "border": "#c8c8c8",
+    "border_focused": "#ff5500",
+    "selection_bg": "#e6e6e6",
+    "selection_fg": "#ff5500",
+    "progress_fill": "#ff5500",
+    "progress_track": "#d2d2d2"
+}

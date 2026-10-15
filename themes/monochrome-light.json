@@ -1,0 +1,14 @@
+{
+    "name": "Monochrome Light",
+    "dark": false,
+    "primary": "#ff5500",
+    "background": "white",
+    "foreground": "black",
+    "foreground_dim": "gray",
+    "border": "gray",
+    "border_focused": "#ff5500",
+    "selection_bg": "#f0f0f0",
+    "selection_fg": "#ff5500",
+    "progress_fill": "#ff5500",
+    "progress_track": "gray"
+}

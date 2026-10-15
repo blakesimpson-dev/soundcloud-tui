@@ -1,0 +1,14 @@
+{
+    "name": "Nord Light",
+    "dark": false,
+    "primary": "#5e81ac",
+    "background": "#eceff4",
+    "foreground": "#2e3440",
+    "foreground_dim": "#4c566a",
+    "border": "#dae0e9",
+    "border_focused": "#5e81ac",
+    "selection_bg": "#e5e9f0",
+    "selection_fg": "#5e81ac",
+    "progress_fill": "#5e81ac",
+    "progress_track": "#dae0e9"
+}

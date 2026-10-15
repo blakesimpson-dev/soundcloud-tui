@@ -1,0 +1,14 @@
+{
+    "name": "Gruvbox Light",
+    "dark": false,
+    "primary": "#af3a03",
+    "background": "#fbf1c7",
+    "foreground": "#3c3836",
+    "foreground_dim": "#928374",
+    "border": "#d5c4a1",
+    "border_focused": "#af3a03",
+    "selection_bg": "#ebdbb2",
+    "selection_fg": "#af3a03",
+    "progress_fill": "#af3a03",
+    "progress_track": "#d5c4a1"
+}

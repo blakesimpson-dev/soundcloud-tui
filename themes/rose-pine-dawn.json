@@ -1,0 +1,14 @@
+{
+    "name": "Rosé Pine Dawn",
+    "dark": false,
+    "primary": "#907aa9",
+    "background": "#faf4ed",
+    "foreground": "#575279",
+    "foreground_dim": "#9893a5",
+    "border": "#f2e9e1",
+    "border_focused": "#907aa9",
+    "selection_bg": "#fffaf3",
+    "selection_fg": "#907aa9",
+    "progress_fill": "#907aa9",
+    "progress_track": "#f2e9e1"
+}

@@ -1,0 +1,14 @@
+{
+    "name": "Catppuccin Latte",
+    "dark": false,
+    "primary": "#8839ef",
+    "background": "#eff1f5",
+    "foreground": "#4c4f69",
+    "foreground_dim": "#8c8fa1",
+    "border": "#ccd0da",
+    "border_focused": "#8839ef",
+    "selection_bg": "#dce0e8",
+    "selection_fg": "#8839ef",
+    "progress_fill": "#8839ef",
+    "progress_track": "#ccd0da"
+}

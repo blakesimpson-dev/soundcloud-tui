@@ -1,0 +1,14 @@
+{
+    "name": "Catppuccin Mocha",
+    "dark": true,
+    "primary": "#cba6f7",
+    "background": "#1e1e2e",
+    "foreground": "#cdd6f4",
+    "foreground_dim": "#a6adc8",
+    "border": "#45475a",
+    "border_focused": "#cba6f7",
+    "selection_bg": "#313244",
+    "selection_fg": "#cba6f7",
+    "progress_fill": "#cba6f7",
+    "progress_track": "#45475a"
+}

@@ -1,0 +1,14 @@
+{
+    "name": "Monochrome Dark",
+    "dark": true,
+    "primary": "#ff5500",
+    "background": "black",
+    "foreground": "white",
+    "foreground_dim": "darkgray",
+    "border": "darkgray",
+    "border_focused": "#ff5500",
+    "selection_bg": "#1e1e1e",
+    "selection_fg": "#ff5500",
+    "progress_fill": "#ff5500",
+    "progress_track": "darkgray"
+}

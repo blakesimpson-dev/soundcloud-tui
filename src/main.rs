@@ -41,7 +41,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Perform initial SoundCloud tracks fetch in background based on config
     let client = app.client.clone();
     let tx = app.command_tx.clone();
-    let user_config = app.config.username_or_url.clone().unwrap_or_else(|| "soundcloud".to_string());
+    let user_config = app
+        .config
+        .username_or_url
+        .clone()
+        .unwrap_or_else(|| "soundcloud".to_string());
 
     tokio::spawn(async move {
         if let Ok(u) = client.resolve_user(&user_config).await {
@@ -64,7 +68,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         if app.audio_player.check_and_clear_eof() {
             app.play_next_track();
         }
-        
+
         while let Ok(cmd) = app.command_rx.try_recv() {
             match cmd {
                 app::AppCommand::PlayUrl(url) => {
@@ -82,7 +86,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 app::AppCommand::UpdateCoverArt(img_bytes) => {
                     if let Ok(img) = image::load_from_memory(&img_bytes) {
                         let reactive_theme = reactive::derive_theme(&img, "Album Art".to_string());
-                        app.theme = reactive_theme;
+                        // app.theme = reactive_theme;
                         app.current_image = Some(img.clone());
 
                         let mut lock = app.cover_art.lock().unwrap();
@@ -115,7 +119,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
 
                 app::AppCommand::ToggleLikeTrack(_track_id) => {
-                    app.status_message = "Track actions (like/unlike) disabled in clean read-only mode.".to_string();
+                    app.status_message =
+                        "Track actions (like/unlike) disabled in clean read-only mode.".to_string();
                 }
             }
         }

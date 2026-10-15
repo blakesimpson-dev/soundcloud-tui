@@ -1,0 +1,14 @@
+{
+    "name": "Kanagawa Wave",
+    "dark": true,
+    "primary": "#7e9cd8",
+    "background": "#1f1f28",
+    "foreground": "#dcd7ba",
+    "foreground_dim": "#727169",
+    "border": "#363646",
+    "border_focused": "#7e9cd8",
+    "selection_bg": "#2a2a37",
+    "selection_fg": "#7e9cd8",
+    "progress_fill": "#7e9cd8",
+    "progress_track": "#363646"
+}

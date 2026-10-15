@@ -1,0 +1,14 @@
+{
+    "name": "GitHub Light",
+    "dark": false,
+    "primary": "#0969da",
+    "background": "#ffffff",
+    "foreground": "#1f2328",
+    "foreground_dim": "#656d76",
+    "border": "#d0d7de",
+    "border_focused": "#0969da",
+    "selection_bg": "#f6f8fa",
+    "selection_fg": "#0969da",
+    "progress_fill": "#0969da",
+    "progress_track": "#d0d7de"
+}

@@ -9,7 +9,7 @@ pub fn derive_theme(img: &DynamicImage, name: String) -> Theme {
     let swatches: Vec<Rgb> =
         match color_thief::get_palette(rgb.as_raw(), color_thief::ColorFormat::Rgb, 10, 8) {
             Ok(p) if !p.is_empty() => p.into_iter().map(|c| Rgb::new(c.r, c.g, c.b)).collect(),
-            _ => return Theme::dark(),
+            _ => return Theme::built_in("Dark"),
         };
     theme_from_swatches(&swatches, name)
 }

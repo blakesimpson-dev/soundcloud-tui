@@ -186,7 +186,7 @@ pub fn clean_artist_title(raw_title: &str, raw_artist: &str) -> (String, String)
 impl App {
     pub fn new() -> Self {
         let config = Config::load();
-        let available_themes = Theme::list();
+        let (available_themes, skipped_themes) = Theme::list();
         let current_theme = available_themes
             .iter()
             .find(|t| t.name == config.theme)
@@ -246,7 +246,11 @@ impl App {
 
             search_input: String::new(),
             is_searching: false,
-            status_message: "Ready. Press <?> for help or <t> to pick theme.".to_string(),
+            status_message: if skipped_themes.is_empty() {
+                "Ready. Press <?> for help or <t> to pick theme.".to_string()
+            } else {
+                format!("Skipped invalid theme file(s): {}", skipped_themes.join(", "))
+            },
 
             audio_player,
             client,

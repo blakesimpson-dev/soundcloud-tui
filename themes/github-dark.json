@@ -1,0 +1,14 @@
+{
+    "name": "GitHub Dark",
+    "dark": true,
+    "primary": "#58a6ff",
+    "background": "#0d1117",
+    "foreground": "#c9d1d9",
+    "foreground_dim": "#8b949e",
+    "border": "#30363d",
+    "border_focused": "#58a6ff",
+    "selection_bg": "#161b22",
+    "selection_fg": "#58a6ff",
+    "progress_fill": "#58a6ff",
+    "progress_track": "#30363d"
+}

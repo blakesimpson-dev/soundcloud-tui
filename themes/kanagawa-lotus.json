@@ -1,0 +1,14 @@
+{
+    "name": "Kanagawa Lotus",
+    "dark": false,
+    "primary": "#4d6f8f",
+    "background": "#f2ecde",
+    "foreground": "#54546d",
+    "foreground_dim": "#8e8e8c",
+    "border": "#e0d9c5",
+    "border_focused": "#4d6f8f",
+    "selection_bg": "#e9e1cf",
+    "selection_fg": "#4d6f8f",
+    "progress_fill": "#4d6f8f",
+    "progress_track": "#e0d9c5"
+}

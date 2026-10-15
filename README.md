@@ -81,6 +81,10 @@ soundcloud-tui
 - `+` / `-`: Volume up / down
 - `q`: Quit
 
+### Themes
+
+Built-in themes live in [`themes/`](themes). To add your own, drop a JSON file with the same fields into the `themes` folder next to `config.json` (`~/Library/Application Support/soundcloud-tui/themes/` on macOS, `~/.config/soundcloud-tui/themes/` on Linux). Colours are `#rrggbb` or names like `darkgray`. A theme with the same `name` as a built-in one replaces it.
+
 ## Credits
 
 Special thanks to [HaseebKhalid1507/Myx](https://github.com/HaseebKhalid1507/Myx) for inspiration!

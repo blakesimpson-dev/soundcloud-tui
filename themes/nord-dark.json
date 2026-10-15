@@ -1,0 +1,14 @@
+{
+    "name": "Nord Dark",
+    "dark": true,
+    "primary": "#88c0d0",
+    "background": "#2e3440",
+    "foreground": "#eceff4",
+    "foreground_dim": "#dae0e9",
+    "border": "#4c566a",
+    "border_focused": "#88c0d0",
+    "selection_bg": "#3b4252",
+    "selection_fg": "#88c0d0",
+    "progress_fill": "#88c0d0",
+    "progress_track": "#4c566a"
+}
