@@ -19,6 +19,27 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{error::Error, io};
 
+/// macOS only hands Now Playing updates (souvlaki's `set_metadata`/`set_playback`) to the system,
+/// and delivers media-key events, while the main thread's run loop runs. A terminal app never runs
+/// it, so the main loop pumps it once per pass, without waiting.
+#[cfg(target_os = "macos")]
+mod run_loop {
+    use std::ffi::c_void;
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFRunLoopDefaultMode: *const c_void;
+        fn CFRunLoopRunInMode(mode: *const c_void, seconds: f64, return_after_source_handled: u8) -> i32;
+    }
+
+    pub fn pump() {
+        // Safe: called from the main thread, with CoreFoundation's own constant.
+        unsafe {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0, 0);
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     // Setup terminal
@@ -126,6 +147,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
 
         app.tick_mpris();
+        #[cfg(target_os = "macos")]
+        run_loop::pump();
 
         terminal.draw(|f| {
             ui::render(&app, f);
