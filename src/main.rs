@@ -1,7 +1,7 @@
 mod app;
 mod audio;
+mod browse;
 mod config;
-mod discord;
 mod event;
 mod soundcloud;
 mod theme;
@@ -79,16 +79,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut app = App::new();
 
-    // Sign in, then load the configured user's tracks, or the signed-in user's own.
+    // Sign in, which opens your profile, then reopen what was showing at quit on top of it.
     let client = app.client.clone();
     let tx = app.command_tx.clone();
-    let user_config = app.config.username_or_url.clone();
+    let saved_view = app.config.last_view.clone();
+    let legacy_user = app.config.username_or_url.clone();
     let manual_token = app.config.oauth_token.clone();
 
     tokio::spawn(async move {
-        let my_id = match client.sign_in(manual_token).await {
+        match client.sign_in(manual_token).await {
             Ok(sign_in) => {
-                let my_id = sign_in.user.id;
                 let _ = tx.send(app::AppCommand::SignedIn(sign_in));
                 let (c, t) = (client.clone(), tx.clone());
                 tokio::spawn(async move {
@@ -102,22 +102,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         let _ = t.send(app::AppCommand::RepostedIds(ids));
                     }
                 });
-                Some(my_id)
             }
             Err(e) => {
                 let _ = tx.send(app::AppCommand::SignInFailed(e));
-                None
             }
-        };
+        }
 
-        let user_id = match user_config {
-            Some(handle) => client.resolve_user(&handle).await.ok().map(|u| u.id),
-            None => my_id,
+        let restored = match (saved_view, legacy_user) {
+            (Some(view), _) => browse::Context::restore(&client, &view).await.ok(),
+            (None, Some(handle)) => client.resolve_user(&handle).await.ok().map(browse::Context::User),
+            (None, None) => None,
         };
-        if let Some(id) = user_id {
-            if let Ok(tracks) = client.get_user_likes(id, 200).await {
-                let _ = tx.send(app::AppCommand::UpdateTracks(tracks));
-            }
+        if let Some(context) = restored {
+            let _ = tx.send(app::AppCommand::OpenContext(context));
         }
     });
 
@@ -130,18 +127,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         while let Ok(cmd) = app.command_rx.try_recv() {
             match cmd {
-                app::AppCommand::PlayUrl(url) => {
+                app::AppCommand::PlayStream { track_id, stream, url } => {
+                    if app.currently_playing.as_ref().map(|t| t.id) != Some(track_id) {
+                        // Another track was picked while this one was starting.
+                        if let Some(stream) = stream {
+                            stream.cancel();
+                        }
+                        continue;
+                    }
+                    app.current_stream = stream;
                     if let Err(e) = app.audio_player.play_url(&url) {
                         app.status_message = format!("Playback error: {}", e);
                     } else {
                         app.status_message = "Playing track...".to_string();
                     }
                 }
-                app::AppCommand::UpdateTracks(tracks) => {
-                    app.set_tracks(tracks);
-                    app.current_view = app::RightView::Tracks;
-                    app.status_message = format!("Loaded {} tracks.", app.tracks.len());
-                }
+                app::AppCommand::Page { collection, page } => app.add_page(collection, page),
+                app::AppCommand::LoadFailed { collection, error } => app.load_failed(collection, error),
+                app::AppCommand::OpenContext(context) => app.open_context(context),
+                app::AppCommand::Status(message) => app.status_message = message,
                 app::AppCommand::UpdateCoverArt(img_bytes) => {
                     if let Ok(img) = image::load_from_memory(&img_bytes) {
                         app.current_image = Some(img);
@@ -181,7 +185,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         sign_in.user.username.as_deref().unwrap_or("?"),
                         sign_in.source
                     );
-                    app.me = Some(sign_in.user);
+                    app.me = Some(sign_in.user.clone());
+                    if app.browser.stack.is_empty() {
+                        app.open_context(browse::Context::User(sign_in.user));
+                    }
                     app.config.client_id = app.client.client_id();
                     app.config.save();
                 }
@@ -193,6 +200,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 app::AppCommand::LikedIds(ids) => app.liked_ids = ids.into_iter().collect(),
                 app::AppCommand::RepostedIds(ids) => app.reposted_ids = ids.into_iter().collect(),
                 app::AppCommand::LikeFailed { track_id, error } => app.revert_like(track_id, error),
+            }
+        }
+
+        if let Some(stream) = &app.current_stream {
+            stream.set_position(app.audio_player.state().current_millis.load(std::sync::atomic::Ordering::Relaxed));
+            if let Some(e) = stream.take_error() {
+                app.status_message = format!("Download failed: {e}");
             }
         }
 

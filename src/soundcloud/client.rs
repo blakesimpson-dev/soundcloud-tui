@@ -257,12 +257,30 @@ impl SoundCloudClient {
         }
     }
 
-    pub async fn search_tracks(&self, query: &str, limit: usize) -> Result<Vec<Track>, String> {
-        let limit_str = limit.to_string();
-        let res: SearchCollection<Track> = self
-            .get_request("search/tracks", &[("q", query), ("limit", &limit_str)])
-            .await?;
-        Ok(res.collection)
+    /// One page of a paginated list. `endpoint` may be a page's `next_href`.
+    pub async fn page<T: DeserializeOwned>(
+        &self,
+        endpoint: &str,
+        query_params: &[(&str, &str)],
+    ) -> Result<SearchCollection<T>, String> {
+        self.get_request(endpoint, query_params).await
+    }
+
+    pub async fn user(&self, id: u64) -> Result<User, String> {
+        self.get_request(&format!("users/{id}"), &[]).await
+    }
+
+    pub async fn playlist(&self, id: u64) -> Result<Playlist, String> {
+        self.get_request(&format!("playlists/{id}"), &[]).await
+    }
+
+    /// Full tracks for up to 50 ids, in the order given. Ids SoundCloud doesn't return
+    /// (removed or private tracks) are left out.
+    pub async fn tracks_by_ids(&self, ids: &[u64]) -> Result<Vec<Track>, String> {
+        let joined = ids.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
+        let tracks: Vec<Track> = self.get_request("tracks", &[("ids", &joined)]).await?;
+        let mut by_id: std::collections::HashMap<u64, Track> = tracks.into_iter().map(|t| (t.id, t)).collect();
+        Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
     }
 
     pub async fn resolve_user(&self, username_or_url: &str) -> Result<User, String> {
@@ -287,59 +305,41 @@ impl SoundCloudClient {
         res.collection.into_iter().next().ok_or_else(|| format!("User '{}' not found", clean))
     }
 
-
-
-    pub async fn get_user_likes(&self, user_id: u64, limit: usize) -> Result<Vec<Track>, String> {
-        let limit_str = limit.to_string();
-
-        let endpoint_likes = format!("users/{}/likes", user_id);
-        if let Ok(data) = self.get_request::<SearchCollection<LikeItem>>(&endpoint_likes, &[("limit", &limit_str)]).await {
-            let tracks: Vec<Track> = data.collection.into_iter().filter_map(|item| item.get_track()).collect();
-            if !tracks.is_empty() {
-                return Ok(tracks);
-            }
-        }
-
-        let endpoint1 = format!("users/{}/likes/tracks", user_id);
-        if let Ok(data) = self.get_request::<SearchCollection<LikeItem>>(&endpoint1, &[("limit", &limit_str)]).await {
-            let tracks: Vec<Track> = data.collection.into_iter().filter_map(|item| item.get_track()).collect();
-            if !tracks.is_empty() {
-                return Ok(tracks);
-            }
-        }
-
-        let endpoint_tracks = format!("users/{}/tracks", user_id);
-        let res_tracks: SearchCollection<Track> = self
-            .get_request(&endpoint_tracks, &[("limit", &limit_str)])
-            .await?;
-        Ok(res_tracks.collection)
-    }
-
-    pub async fn get_stream_url(&self, track: &Track) -> Result<String, String> {
+    /// Where to download the track's audio from, in the best format it's available in.
+    pub async fn stream_source(&self, track: &Track) -> Result<crate::audio::stream::Source, String> {
+        use crate::audio::stream::Source;
         let transcodings = track
             .media
             .as_ref()
             .and_then(|m| m.transcodings.as_ref())
             .ok_or_else(|| "No transcodings found for track".to_string())?;
 
-        let mut ranked: Vec<(u32, &str)> = transcodings
+        let mut ranked: Vec<(u32, &str, bool)> = transcodings
             .iter()
-            .filter_map(|t| Some((stream_rank(t.preset.as_deref().unwrap_or(""))?, t.url.as_deref()?)))
+            .filter_map(|t| {
+                // Encrypted streams (DRM) can't be played; mpv has no key for them.
+                let hls = match t.format.as_ref()?.protocol.as_deref()? {
+                    "hls" => true,
+                    "progressive" => false,
+                    _ => return None,
+                };
+                Some((stream_rank(t.preset.as_deref().unwrap_or(""))?, t.url.as_deref()?, hls))
+            })
             .collect();
         ranked.sort_by(|a, b| b.0.cmp(&a.0));
 
         // A format can be listed and still fail to resolve; fall through to the next best.
-        let mut last_err = "No playable stream formats".to_string();
-        for (_, url) in ranked {
+        let mut last_err = "No playable (unencrypted) stream".to_string();
+        for (_, url, hls) in ranked {
             match self.get_request::<StreamResponse>(url, &[]).await {
-                Ok(StreamResponse { url: Some(stream) }) => return Ok(stream),
+                Ok(StreamResponse { url: Some(stream) }) if hls => return Ok(Source::Hls(stream)),
+                Ok(StreamResponse { url: Some(stream) }) => return Ok(Source::Progressive(stream)),
                 Ok(_) => last_err = "Failed to resolve stream URL".to_string(),
                 Err(e) => last_err = e,
             }
         }
         Err(last_err)
     }
-
 }
 
 /// How good a stream format is, higher is better: AAC by bitrate (`aac_256k` is Go+ HQ), then

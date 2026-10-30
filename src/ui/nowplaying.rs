@@ -7,9 +7,10 @@ use ratatui::{
 };
 
 use crate::app::App;
+use crate::audio::spectrum::{Spectrum, BANDS};
 
 pub fn render_nowplaying_view(app: &App, area: Rect, frame: &mut Frame) {
-    if app.currently_playing.is_none() && app.tracks.is_empty() {
+    if app.currently_playing.is_none() && app.selected_track().is_none() {
         let empty_msg = Paragraph::new("Nothing playing.\nBrowse artists on the left and press Enter.")
             .style(Style::default().fg(app.theme.foreground_dim))
             .alignment(Alignment::Center);
@@ -27,7 +28,7 @@ pub fn render_nowplaying_view(app: &App, area: Rect, frame: &mut Frame) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(8),     // Upper: Cover Art + Info
-            Constraint::Length(5),  // Lower: Audio Visualizer
+            Constraint::Length(5),  // Lower: Spectrum
         ])
         .split(area);
 
@@ -81,7 +82,7 @@ pub fn render_nowplaying_view(app: &App, area: Rect, frame: &mut Frame) {
     }
 
     // Render Track Meta Info below Artwork
-    if let Some(track) = app.currently_playing.as_ref().or(app.tracks.get(app.selected_track_index)) {
+    if let Some(track) = app.currently_playing.as_ref().or(app.selected_track()) {
         let text_y = art_rect.y + art_height + 1;
         if text_y < top.bottom() {
             let info_rect = Rect {
@@ -115,100 +116,59 @@ pub fn render_nowplaying_view(app: &App, area: Rect, frame: &mut Frame) {
         }
     }
 
-    // Render Live Audio Visualizer Spectrum Bar at Bottom
-    render_visualizer(app, chunks[1], frame);
+    render_spectrum(app, chunks[1], frame);
 }
 
-fn render_visualizer(app: &App, area: Rect, frame: &mut Frame) {
-    if area.height < 3 || area.width < 10 {
+/// The playing track's frequency spectrum at the current moment: one bar per band, bass on
+/// the left. Levels are drawn relative to the track's loudest band, over a 60 dB range.
+fn render_spectrum(app: &App, area: Rect, frame: &mut Frame) {
+    const RANGE_DB: f32 = 60.0;
+    let Some(stream) = &app.current_stream else { return };
+    if area.height == 0 || area.width < BANDS as u16 {
         return;
     }
+    let spectrum = stream.spectrum.read().unwrap();
+    let secs = app.audio_player.state().current_millis.load(std::sync::atomic::Ordering::SeqCst) as f32 / 1000.0;
+    let Some(levels) = spectrum.at(secs) else { return };
+    let top = Spectrum::db(spectrum.peak);
+    let heights: Vec<f32> =
+        levels.iter().map(|&l| ((Spectrum::db(l) - (top - RANGE_DB)) / RANGE_DB).clamp(0.0, 1.0)).collect();
+    drop(spectrum);
 
-    let is_playing = app.audio_player.state().is_playing.load(std::sync::atomic::Ordering::SeqCst);
-    let ms = app.audio_player.state().current_millis.load(std::sync::atomic::Ordering::SeqCst);
-
-    let vh = (area.height as usize).min(7);
-    let vw = (area.width.saturating_sub(6) as usize).min(70);
-    if vw == 0 || vh == 0 {
-        return;
-    }
-
-    let vrect = Rect {
-        x: area.x + (area.width.saturating_sub(vw as u16)) / 2,
-        y: area.y + area.height.saturating_sub(vh as u16),
-        width: vw as u16,
-        height: vh as u16,
+    // Bars a few cells wide with a gap between, centered.
+    let bar = ((area.width as usize / BANDS).saturating_sub(1)).clamp(1, 3);
+    let width = BANDS * (bar + 1) - 1;
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(width as u16)) / 2,
+        y: area.y,
+        width: width as u16,
+        height: area.height,
     };
 
-    let mut cols = vec![0.0f32; vw];
-
-    if is_playing {
-        let t = ms as f32 / 1000.0;
-        
-        // Simulating 32 audio frequency bands (bass on left -> mids in center -> treble on right)
-        let num_bands = 32;
-        let mut bands = [0.0f32; 32];
-        for b in 0..num_bands {
-            let b_freq = b as f32;
-            let bass = (t * 4.5).sin().max(0.0).powf(2.0) * (1.0 - b_freq / 10.0).max(0.0);
-            let snare = ((t * 9.0 + 1.2).sin().max(0.0)).powf(3.0) * (1.0 - (b_freq - 12.0).abs() / 8.0).max(0.0);
-            let melody = ((t * 3.2 + b_freq * 0.4).sin() * 0.5 + 0.5) * (1.0 - (b_freq - 18.0).abs() / 12.0).max(0.0);
-            let hihat = ((t * 14.0 + b_freq * 0.8).cos().abs()) * (b_freq / 31.0);
-            
-            bands[b] = (bass * 0.85 + snare * 0.65 + melody * 0.5 + hihat * 0.35).clamp(0.03, 1.0);
-        }
-
-        // Map 32 bands to screen columns
-        for x in 0..vw {
-            let b_idx = (x * num_bands) / vw;
-            cols[x] = bands[b_idx.min(num_bands - 1)];
-        }
-
-        // Spatial smoothing pass across adjacent columns
-        for _ in 0..2 {
-            let src = cols.clone();
-            for x in 0..vw {
-                let l = src[x.saturating_sub(1)];
-                let r = src[(x + 1).min(vw - 1)];
-                cols[x] = l * 0.25 + src[x] * 0.5 + r * 0.25;
+    let rows = area.height as usize;
+    const EIGHTHS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let style = Style::default().fg(app.theme.progress_fill);
+    let lines: Vec<Line> = (0..rows)
+        .map(|row| {
+            let from_bottom = (rows - 1 - row) as f32;
+            let mut text = String::with_capacity(width * 3);
+            for (i, height) in heights.iter().enumerate() {
+                let filled = height * rows as f32 - from_bottom;
+                let ch = if filled >= 1.0 {
+                    '█'
+                } else if filled <= 0.0 {
+                    ' '
+                } else {
+                    EIGHTHS[((filled * 8.0) as usize).min(7)]
+                };
+                text.extend(std::iter::repeat_n(ch, bar));
+                if i + 1 < BANDS {
+                    text.push(' ');
+                }
             }
-        }
-    }
+            Line::from(Span::styled(text, style))
+        })
+        .collect();
 
-    const LEVELS: [char; 8] = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-
-    let mut lines: Vec<Line> = Vec::with_capacity(vh);
-    for row in 0..vh {
-        let from_bottom = (vh - 1 - row) as f32;
-        let vfrac = if vh > 1 { from_bottom / (vh - 1) as f32 } else { 0.0 };
-
-        let color = if vfrac > 0.6 {
-            app.theme.primary
-        } else if vfrac > 0.2 {
-            app.theme.selection_fg
-        } else {
-            app.theme.border_focused
-        };
-
-        let mut spans: Vec<Span> = Vec::with_capacity(vw);
-        for &v in &cols {
-            let filled = v * vh as f32 - from_bottom;
-            let ch = if filled >= 1.0 {
-                '█'
-            } else if filled <= 0.0 {
-                ' '
-            } else {
-                LEVELS[((filled * 8.0) as usize).clamp(1, 8) - 1]
-            };
-
-            if ch == ' ' {
-                spans.push(Span::raw(" "));
-            } else {
-                spans.push(Span::styled(ch.to_string(), Style::default().fg(color)));
-            }
-        }
-        lines.push(Line::from(spans));
-    }
-
-    frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), vrect);
+    frame.render_widget(Paragraph::new(lines), rect);
 }

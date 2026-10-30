@@ -1,7 +1,9 @@
+use crate::audio::stream::TrackStream;
 use crate::audio::AudioPlayer;
+use crate::browse::{Browser, Collection, Context, Frame, Page};
 use crate::config::Config;
 use crate::soundcloud::client::SignIn;
-use crate::soundcloud::{SoundCloudClient, Track, User};
+use crate::soundcloud::{Entry, SoundCloudClient, Track, User};
 
 use std::collections::HashSet;
 use crate::theme::Theme;
@@ -17,8 +19,13 @@ pub struct LyricsInfo {
 }
 
 pub enum AppCommand {
-    PlayUrl(String),
-    UpdateTracks(Vec<Track>),
+    /// A track is ready to play from `url`, if it's still the one wanted. `stream` is the
+    /// app's download of it, when the app is downloading it (see `audio::stream`).
+    PlayStream { track_id: u64, stream: Option<std::sync::Arc<TrackStream>>, url: String },
+    Page { collection: Collection, page: Page },
+    LoadFailed { collection: Collection, error: String },
+    OpenContext(Context),
+    Status(String),
     UpdateCoverArt(Vec<u8>),
     UpdateLyrics { lyrics: String, info: LyricsInfo },
     TogglePause,
@@ -89,9 +96,9 @@ impl RightView {
     pub fn label(&self) -> &'static str {
         match self {
             RightView::NowPlaying => "Now Playing",
-            RightView::Lyrics => "Lyrics",
+            RightView::Lyrics => "Details",
             RightView::Queue => "Queue",
-            RightView::Tracks => "Tracks",
+            RightView::Tracks => "Browse",
         }
     }
 }
@@ -124,9 +131,11 @@ pub struct App {
     pub theme_picker_selected: usize,
     pub help_open: bool,
 
-    pub tracks: Vec<Track>,
-    pub all_fetched_tracks: Vec<Track>,
-    pub selected_track_index: usize,
+    pub browser: Browser,
+    pub list_offsets: ListOffsets,
+    /// The current tab's entries after the filters, artist and sort: what the list shows.
+    pub rows: Vec<Entry>,
+    pub selected_row: usize,
 
     pub filter_snippets: bool,
     pub min_duration_secs: u64,
@@ -140,7 +149,13 @@ pub struct App {
     pub queue: Vec<Track>,
     pub queue_index: usize,
     pub currently_playing: Option<Track>,
-    pub last_playing_index: Option<usize>,
+    /// The tracks next/previous step through, from the list playback started in, and that
+    /// list's collection.
+    pub play_context: Vec<Track>,
+    pub play_context_source: Option<Collection>,
+    /// The last track played from `play_context`, which next/previous step from. Queued
+    /// tracks play in between without moving it.
+    pub last_context_track: Option<u64>,
 
     pub search_input: String,
     pub is_searching: bool,
@@ -156,21 +171,38 @@ pub struct App {
     pub image_picker: std::sync::Mutex<Option<ratatui_image::picker::Picker>>,
     pub cover_art: std::sync::Arc<std::sync::Mutex<Option<(ratatui::layout::Rect, ratatui_image::protocol::Protocol)>>>,
     pub current_image: Option<image::DynamicImage>,
+    /// The playing track's audio, which mpv plays and the spectrum is drawn from.
+    pub current_stream: Option<std::sync::Arc<TrackStream>>,
     pub current_lyrics: Option<String>,
     pub synced_lyrics: Vec<SyncedLine>,
     pub current_lyrics_info: Option<LyricsInfo>,
-    pub user_handle: Option<String>,
     pub is_setting_user: bool,
     pub user_input: String,
     pub mpris_controls: Option<souvlaki::MediaControls>,
     pub last_mpris_update: std::time::Instant,
-    pub discord_rpc: crate::discord::DiscordRpcManager,
 
     /// The signed-in account, and the tracks it has liked and reposted.
     pub me: Option<User>,
     pub liked_ids: HashSet<u64>,
     pub reposted_ids: HashSet<u64>,
 }
+
+/// Scroll positions of the scrolling lists, kept between frames so a list only scrolls when
+/// its selection would leave the screen. Rendering only borrows the app, hence the cells.
+#[derive(Default)]
+pub struct ListOffsets {
+    pub artists: std::cell::Cell<usize>,
+    pub rows: std::cell::Cell<usize>,
+    pub queue: std::cell::Cell<usize>,
+    pub themes: std::cell::Cell<usize>,
+}
+
+/// The artist filter's first item, which shows everything.
+pub const ALL_ARTISTS: &str = "All Artists";
+
+/// How close to the end of a list the selection gets before the next page of an on-demand
+/// list (search results) is requested.
+const LOAD_MORE_WITHIN: usize = 10;
 
 pub fn clean_artist_title(raw_title: &str, raw_artist: &str) -> (String, String) {
     let mut title = raw_title.to_string();
@@ -210,24 +242,7 @@ impl App {
         audio_player.set_volume(config.volume);
         let (command_tx, command_rx) = unbounded_channel();
 
-        let left_items = vec![
-            "All Artists".to_string(),
-            "Agar Agar".to_string(),
-            "Architects".to_string(),
-            "Bad Omens".to_string(),
-            "Bauhaus".to_string(),
-            "Bring Me The Horizon".to_string(),
-            "Bôa".to_string(),
-            "Chelsea Wolfe".to_string(),
-            "Chroma Key".to_string(),
-            "Clan Of Xymox".to_string(),
-            "Depeche Mode".to_string(),
-            "Erra".to_string(),
-            "IAMX".to_string(),
-            "Massive Attack".to_string(),
-            "Radiohead".to_string(),
-            "Tame Impala".to_string(),
-        ];
+        let left_items = vec![ALL_ARTISTS.to_string()];
 
         Self {
             active_pane: ActivePane::LeftSidebar,
@@ -238,9 +253,10 @@ impl App {
             theme_picker_selected: 0,
             help_open: false,
 
-            tracks: Vec::new(),
-            all_fetched_tracks: Vec::new(),
-            selected_track_index: 0,
+            browser: Browser::default(),
+            list_offsets: ListOffsets::default(),
+            rows: Vec::new(),
+            selected_row: 0,
 
             filter_snippets: true,
             min_duration_secs: 45,
@@ -254,7 +270,9 @@ impl App {
             queue: Vec::new(),
             queue_index: 0,
             currently_playing: None,
-            last_playing_index: None,
+            play_context: Vec::new(),
+            play_context_source: None,
+            last_context_track: None,
 
             search_input: String::new(),
             is_searching: false,
@@ -274,10 +292,10 @@ impl App {
             image_picker: std::sync::Mutex::new(ratatui_image::picker::Picker::from_query_stdio().ok().or_else(|| Some(ratatui_image::picker::Picker::halfblocks()))),
             cover_art: std::sync::Arc::new(std::sync::Mutex::new(None)),
             current_image: None,
+            current_stream: None,
             current_lyrics: None,
             synced_lyrics: Vec::new(),
             current_lyrics_info: None,
-            user_handle: None,
             is_setting_user: false,
             user_input: String::new(),
             mpris_controls: {
@@ -317,7 +335,6 @@ impl App {
                 controls
             },
             last_mpris_update: std::time::Instant::now(),
-            discord_rpc: crate::discord::DiscordRpcManager::new(),
 
             me: None,
             liked_ids: HashSet::new(),
@@ -443,21 +460,23 @@ impl App {
 
             let _ = controls.set_playback(playback_status);
         }
-        self.update_discord_rpc();
     }
 
-    pub fn update_discord_rpc(&mut self) {
-        let is_playing = self.audio_player.state().is_playing.load(std::sync::atomic::Ordering::SeqCst);
-        let current_ms = self.audio_player.state().current_millis.load(std::sync::atomic::Ordering::SeqCst);
-        let duration_ms = match &self.currently_playing {
-            Some(t) => t.duration.unwrap_or_else(|| self.audio_player.state().duration_secs.load(std::sync::atomic::Ordering::SeqCst) * 1000),
-            None => 0,
-        };
-        let track = self.currently_playing.as_ref();
-
-        self.discord_rpc.update(track, is_playing, current_ms, duration_ms);
+    pub fn selected_entry(&self) -> Option<&Entry> {
+        self.rows.get(self.selected_row)
     }
 
+    pub fn selected_track(&self) -> Option<&Track> {
+        self.selected_entry().and_then(Entry::as_track)
+    }
+
+    /// Where the last context track sits in the play context.
+    fn context_position(&self) -> Option<usize> {
+        let id = self.last_context_track?;
+        self.play_context.iter().position(|t| t.id == id)
+    }
+
+    /// The now-playing track, then the queue, then the next 50 of the play context.
     pub fn get_queue_tracks(&self) -> Vec<Track> {
         let mut list = Vec::new();
         if let Some(t) = &self.currently_playing {
@@ -465,17 +484,9 @@ impl App {
         }
         list.extend(self.queue.clone());
 
-        let current_id = self.currently_playing.as_ref().map(|t| t.id);
-        let start_idx = if let Some(cid) = current_id {
-            self.tracks.iter().position(|t| t.id == cid).map(|i| i + 1).unwrap_or(0)
-        } else {
-            self.selected_track_index
-        };
-
-        if !self.tracks.is_empty() {
-            let end = (start_idx + 50).min(self.tracks.len());
-            list.extend(self.tracks[start_idx..end].iter().cloned());
-        }
+        let start = self.context_position().map(|i| i + 1).unwrap_or(0);
+        let end = (start + 50).min(self.play_context.len());
+        list.extend(self.play_context[start.min(end)..end].iter().cloned());
         list
     }
 
@@ -484,10 +495,10 @@ impl App {
         if let Some(track) = q_tracks.get(self.queue_index).cloned() {
             if let Some(pos) = self.queue.iter().position(|t| t.id == track.id) {
                 self.queue.drain(0..=pos);
+            } else if self.play_context.iter().any(|t| t.id == track.id) {
+                self.last_context_track = Some(track.id);
             }
-            if let Some(idx) = self.tracks.iter().position(|t| t.id == track.id) {
-                self.selected_track_index = idx;
-            }
+            self.select_track_row(track.id);
             self.play_track(track);
             self.queue_index = 0;
         }
@@ -499,37 +510,50 @@ impl App {
             self.play_track(next_track);
             return;
         }
-
-        if self.tracks.is_empty() {
-            return;
-        }
-
-        let base_idx = self.last_playing_index.unwrap_or(self.selected_track_index);
-        let next_idx = (base_idx + 1) % self.tracks.len();
-        self.selected_track_index = next_idx;
-        self.last_playing_index = Some(next_idx);
-        if let Some(track) = self.tracks.get(next_idx).cloned() {
-            self.play_track(track);
-        }
+        self.step_context(1);
     }
 
     pub fn play_prev_track(&mut self) {
-        if self.tracks.is_empty() {
+        self.step_context(-1);
+    }
+
+    /// Plays the track `delta` places from the last context track, wrapping around.
+    fn step_context(&mut self, delta: isize) {
+        let len = self.play_context.len() as isize;
+        if len == 0 {
             return;
         }
-        let base_idx = self.last_playing_index.unwrap_or(self.selected_track_index);
-        let prev_idx = if base_idx == 0 { self.tracks.len() - 1 } else { base_idx - 1 };
-        self.selected_track_index = prev_idx;
-        self.last_playing_index = Some(prev_idx);
-        if let Some(track) = self.tracks.get(prev_idx).cloned() {
-            self.play_track(track);
+        let next = match self.context_position() {
+            Some(pos) => (pos as isize + delta).rem_euclid(len) as usize,
+            None => 0,
+        };
+        let track = self.play_context[next].clone();
+        self.last_context_track = Some(track.id);
+        self.select_track_row(track.id);
+        self.play_track(track);
+    }
+
+    /// Selects the track's row if the list showing is the one playback steps through.
+    fn select_track_row(&mut self, track_id: u64) {
+        if self.play_context_source.is_some() && self.play_context_source == self.browser.collection() {
+            if let Some(idx) = self.rows.iter().position(|e| e.key() == (0, track_id)) {
+                self.selected_row = idx;
+            }
         }
     }
 
-    pub fn play_selected_track(&mut self) {
-        if let Some(track) = self.tracks.get(self.selected_track_index).cloned() {
-            self.last_playing_index = Some(self.selected_track_index);
-            self.play_track(track);
+    /// Plays the selected track, or opens the selected playlist or user.
+    pub fn activate_selected(&mut self) {
+        match self.selected_entry().cloned() {
+            Some(Entry::Track(track)) => {
+                self.play_context = self.rows.iter().filter_map(Entry::as_track).cloned().collect();
+                self.play_context_source = self.browser.collection();
+                self.last_context_track = Some(track.id);
+                self.play_track(track);
+            }
+            Some(Entry::Playlist(playlist)) => self.open_context(Context::Playlist(playlist)),
+            Some(Entry::User(user)) => self.open_context(Context::User(user)),
+            None => {}
         }
     }
 
@@ -539,6 +563,10 @@ impl App {
         self.current_lyrics = None;
         self.synced_lyrics.clear();
 
+        // Cancel the old stream before stopping mpv, so mpv isn't left waiting on its download.
+        if let Some(old) = self.current_stream.take() {
+            old.cancel();
+        }
         self.audio_player.stop();
 
         let artwork_url = track.get_artwork_url();
@@ -547,9 +575,20 @@ impl App {
 
         let track_stream = track.clone();
         tokio::spawn(async move {
-            if let Ok(stream_url) = client.get_stream_url(&track_stream).await {
-                let _ = tx.send(crate::app::AppCommand::PlayUrl(stream_url));
-            }
+            use crate::audio::stream::Source;
+            let started = match client.stream_source(&track_stream).await {
+                Ok(Source::Hls(url)) => match TrackStream::start(&url).await {
+                    Ok(stream) => stream.serve().map(|url| (Some(stream), url)),
+                    Err(e) => Err(e),
+                },
+                Ok(Source::Progressive(url)) => Ok((None, url)),
+                Err(e) => Err(e),
+            };
+            let command = match started {
+                Ok((stream, url)) => AppCommand::PlayStream { track_id: track_stream.id, stream, url },
+                Err(e) => AppCommand::Status(format!("Can't play '{}': {e}", track_stream.display_title())),
+            };
+            let _ = tx.send(command);
         });
 
         if let Some(art_url) = artwork_url {
@@ -662,27 +701,121 @@ impl App {
         });
     }
 
-    pub fn set_tracks(&mut self, tracks: Vec<Track>) {
-        self.all_fetched_tracks = tracks;
-        self.update_artist_list();
-        self.apply_filters_and_sort();
+    /// Shows a page, on top of the current one. Reopening the page already showing does nothing.
+    pub fn open_context(&mut self, context: Context) {
+        if self.browser.frame().is_some_and(|f| f.context.saved() == context.saved()) {
+            return;
+        }
+        self.save_selection();
+        let tabs = context.tabs().len();
+        self.config.last_view = Some(context.saved());
+        self.config.save();
+        self.browser.stack.push(Frame { context, tab: 0, selected: vec![0; tabs] });
+        self.current_view = RightView::Tracks;
+        self.show_tab();
     }
 
+    /// Returns to the previous page.
+    pub fn go_back(&mut self) {
+        if self.browser.stack.len() < 2 {
+            return;
+        }
+        self.browser.stack.pop();
+        self.config.last_view = self.browser.frame().map(|f| f.context.saved());
+        self.config.save();
+        self.show_tab();
+    }
+
+    pub fn select_tab(&mut self, tab: usize) {
+        let Some(frame) = self.browser.frame() else { return };
+        if tab >= frame.context.tabs().len() || tab == frame.tab {
+            return;
+        }
+        self.save_selection();
+        if let Some(frame) = self.browser.stack.last_mut() {
+            frame.tab = tab;
+        }
+        self.current_view = RightView::Tracks;
+        self.show_tab();
+    }
+
+    fn save_selection(&mut self) {
+        let row = self.selected_row;
+        if let Some(frame) = self.browser.stack.last_mut() {
+            if let Some(slot) = frame.selected.get_mut(frame.tab) {
+                *slot = row;
+            }
+        }
+    }
+
+    /// Shows the current tab: starts loading it if it isn't (or retries it if it failed), and
+    /// restores its selection.
+    fn show_tab(&mut self) {
+        if let Some(collection) = self.browser.collection() {
+            if self.browser.listings.get(&collection).is_none_or(|l| l.error.is_some()) {
+                self.browser.load_more(&collection, &self.client, &self.command_tx);
+            }
+        }
+        self.selected_left_index = 0;
+        self.list_offsets.artists.set(0);
+        self.list_offsets.rows.set(0);
+        self.update_artist_list();
+        self.apply_filters_and_sort();
+        self.selected_row = self
+            .browser
+            .frame()
+            .and_then(|f| f.selected.get(f.tab).copied())
+            .unwrap_or(0)
+            .min(self.rows.len().saturating_sub(1));
+    }
+
+    pub fn add_page(&mut self, collection: Collection, page: Page) {
+        self.browser.add_page(collection.clone(), page);
+        if self.browser.collection() == Some(collection) {
+            self.update_artist_list();
+            self.apply_filters_and_sort();
+            self.load_more_if_near_end();
+        }
+    }
+
+    pub fn load_failed(&mut self, collection: Collection, error: String) {
+        self.status_message = format!("Couldn't load {}: {}", collection.label(), error);
+        self.browser.load_failed(collection, error);
+    }
+
+    /// Requests the next page of an on-demand list once the selection nears its end.
+    fn load_more_if_near_end(&mut self) {
+        if self.selected_row + LOAD_MORE_WITHIN < self.rows.len() {
+            return;
+        }
+        if let Some(collection) = self.browser.collection() {
+            if self.browser.listings.get(&collection).is_some_and(|l| l.error.is_none()) {
+                self.browser.load_more(&collection, &self.client, &self.command_tx);
+            }
+        }
+    }
+
+    /// Rebuilds the artist filter from the current tab, keeping the chosen artist if they're
+    /// still there.
     pub fn update_artist_list(&mut self) {
+        let chosen = self.left_items.get(self.selected_left_index).cloned();
         let mut artist_set = std::collections::BTreeSet::new();
-        for track in &self.all_fetched_tracks {
-            let artist = track.display_artist().to_string();
-            if !artist.is_empty() && artist != "Unknown Artist" {
-                artist_set.insert(artist);
+        for entry in self.browser.listing().map(|l| l.entries.as_slice()).unwrap_or_default() {
+            if let Some(artist) = entry.artist() {
+                if !artist.is_empty() && artist != "Unknown Artist" {
+                    artist_set.insert(artist.to_string());
+                }
             }
         }
 
-        let mut items = vec!["All Artists".to_string()];
+        let mut items = vec![ALL_ARTISTS.to_string()];
         items.extend(artist_set);
+        self.selected_left_index = chosen.and_then(|c| items.iter().position(|i| *i == c)).unwrap_or(0);
         self.left_items = items;
-        self.selected_left_index = 0;
     }
 
+    /// Rebuilds the rows from the current tab, keeping the selected entry selected. If the
+    /// tab is the one playback steps through, playback follows the new order.
     pub fn apply_filters_and_sort(&mut self) {
         let min_ms = if self.filter_snippets {
             self.min_duration_secs * 1000
@@ -690,41 +823,39 @@ impl App {
             0
         };
 
-        let selected_artist = if self.selected_left_index > 0 && self.selected_left_index < self.left_items.len() {
-            Some(self.left_items[self.selected_left_index].clone())
+        let selected_artist = if self.selected_left_index > 0 {
+            self.left_items.get(self.selected_left_index).cloned()
         } else {
             None
         };
 
-        let mut filtered: Vec<Track> = self
-            .all_fetched_tracks
+        let mut filtered: Vec<Entry> = self
+            .browser
+            .listing()
+            .map(|l| l.entries.as_slice())
+            .unwrap_or_default()
             .iter()
-            .filter(|t| t.duration.unwrap_or(0) >= min_ms)
-            .filter(|t| {
-                if let Some(artist) = &selected_artist {
-                    t.display_artist() == artist.as_str()
-                } else {
-                    true
-                }
-            })
+            .filter(|e| e.as_track().is_none_or(|t| t.duration.unwrap_or(0) >= min_ms))
+            .filter(|e| selected_artist.as_deref().is_none_or(|a| e.artist() == Some(a)))
             .cloned()
             .collect();
 
         match self.sort_order {
             SortOrder::Default => {}
-            SortOrder::PlaysDesc => {
-                filtered.sort_by_key(|b| std::cmp::Reverse(b.playback_count.unwrap_or(0)));
-            }
-            SortOrder::DurationDesc => {
-                filtered.sort_by_key(|b| std::cmp::Reverse(b.duration.unwrap_or(0)));
-            }
-            SortOrder::TitleAsc => {
-                filtered.sort_by_key(|a| a.display_title().to_lowercase());
-            }
+            SortOrder::PlaysDesc => filtered.sort_by_key(|e| std::cmp::Reverse(e.count())),
+            SortOrder::DurationDesc => filtered.sort_by_key(|e| std::cmp::Reverse(e.duration_ms())),
+            SortOrder::TitleAsc => filtered.sort_by_key(|e| e.title().to_lowercase()),
         }
 
-        self.tracks = filtered;
-        self.selected_track_index = 0;
+        let selected = self.selected_entry().map(Entry::key);
+        self.rows = filtered;
+        self.selected_row = selected
+            .and_then(|key| self.rows.iter().position(|e| e.key() == key))
+            .unwrap_or(0);
+
+        if self.play_context_source.is_some() && self.play_context_source == self.browser.collection() {
+            self.play_context = self.rows.iter().filter_map(Entry::as_track).cloned().collect();
+        }
     }
 
     pub fn next_pane(&mut self) {
@@ -767,8 +898,9 @@ impl App {
             }
             ActivePane::RightMain => {
                 if self.current_view == RightView::Tracks {
-                    if !self.tracks.is_empty() {
-                        self.selected_track_index = (self.selected_track_index + 1) % self.tracks.len();
+                    if !self.rows.is_empty() {
+                        self.selected_row = (self.selected_row + 1) % self.rows.len();
+                        self.load_more_if_near_end();
                     }
                 } else if self.current_view == RightView::Queue {
                     let q_tracks = self.get_queue_tracks();
@@ -795,12 +927,13 @@ impl App {
             }
             ActivePane::RightMain => {
                 if self.current_view == RightView::Tracks {
-                    if !self.tracks.is_empty() {
-                        if self.selected_track_index == 0 {
-                            self.selected_track_index = self.tracks.len() - 1;
+                    if !self.rows.is_empty() {
+                        if self.selected_row == 0 {
+                            self.selected_row = self.rows.len() - 1;
                         } else {
-                            self.selected_track_index -= 1;
+                            self.selected_row -= 1;
                         }
+                        self.load_more_if_near_end();
                     }
                 } else if self.current_view == RightView::Queue {
                     let q_tracks = self.get_queue_tracks();
