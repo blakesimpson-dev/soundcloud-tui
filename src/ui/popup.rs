@@ -256,7 +256,7 @@ pub fn render_help_popup(app: &App, frame: &mut Frame) {
         return;
     }
 
-    let area = top_centered_rect(70, 22, frame.area());
+    let area = top_centered_rect(70, 24, frame.area());
     frame.render_widget(Clear, area);
 
     let title_line = Line::from(vec![
@@ -336,6 +336,14 @@ pub fn render_help_popup(app: &App, frame: &mut Frame) {
         Line::from(vec![
             Span::styled("  f        ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
             Span::styled("Filter / Sort options modal", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  s / L    ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Like / unlike track (signed in via your browser)", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  R        ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Open track on soundcloud.com (to repost)", Style::default().fg(app.theme.foreground_dim)),
         ]),
         Line::from(""),
         Line::from(vec![

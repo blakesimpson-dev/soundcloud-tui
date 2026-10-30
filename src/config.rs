@@ -3,7 +3,10 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    /// Overrides the login read from the browser. Normally unset.
     pub oauth_token: Option<String>,
+    /// Cached so startup skips scraping one from soundcloud.com.
+    pub client_id: Option<String>,
     pub username_or_url: Option<String>,
     pub theme: String,
     pub volume: u64,
@@ -14,6 +17,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             oauth_token: None,
+            client_id: None,
             username_or_url: None,
             theme: "Monochrome Dark".to_string(),
             volume: 65,

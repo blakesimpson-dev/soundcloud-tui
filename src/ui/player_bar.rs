@@ -22,15 +22,26 @@ pub fn render_now_strip(app: &App, area: Rect, frame: &mut Frame) {
     let loop_enabled = state.loop_enabled.load(Ordering::SeqCst);
 
     // Row 1: Track title & Volume meter on far right
-    let (track_title, artist_name) = if let Some(track) = &app.currently_playing {
-        (track.display_title(), track.display_artist())
-    } else if let Some(track) = app.tracks.get(app.selected_track_index) {
-        (track.display_title(), track.display_artist())
-    } else {
-        ("Everything Is Burning", "IAMX")
+    let shown = app.currently_playing.as_ref().or(app.tracks.get(app.selected_track_index));
+    let (track_title, artist_name) = match shown {
+        Some(track) => (track.display_title(), track.display_artist()),
+        None => ("Everything Is Burning", "IAMX"),
     };
+    let marks = shown
+        .map(|t| {
+            let mut m = String::new();
+            if app.is_liked(t.id) {
+                m.push_str("♥ ");
+            }
+            if app.is_reposted(t.id) {
+                m.push_str("↻ ");
+            }
+            m
+        })
+        .unwrap_or_default();
 
     let title_line = Line::from(vec![
+        Span::styled(marks, Style::default().fg(app.theme.primary)),
         Span::styled(
             format!("{} — ", track_title),
             Style::default()

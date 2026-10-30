@@ -1,6 +1,9 @@
 use crate::audio::AudioPlayer;
 use crate::config::Config;
-use crate::soundcloud::{SoundCloudClient, Track};
+use crate::soundcloud::client::SignIn;
+use crate::soundcloud::{SoundCloudClient, Track, User};
+
+use std::collections::HashSet;
 use crate::theme::Theme;
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -23,7 +26,11 @@ pub enum AppCommand {
     PrevTrack,
     Seek(i64),
     SetPosition(u64),
-    ToggleLikeTrack(u64),
+    SignedIn(SignIn),
+    SignInFailed(String),
+    LikedIds(Vec<u64>),
+    RepostedIds(Vec<u64>),
+    LikeFailed { track_id: u64, error: String },
 }
 
 #[derive(Debug, Clone)]
@@ -158,6 +165,11 @@ pub struct App {
     pub mpris_controls: Option<souvlaki::MediaControls>,
     pub last_mpris_update: std::time::Instant,
     pub discord_rpc: crate::discord::DiscordRpcManager,
+
+    /// The signed-in account, and the tracks it has liked and reposted.
+    pub me: Option<User>,
+    pub liked_ids: HashSet<u64>,
+    pub reposted_ids: HashSet<u64>,
 }
 
 pub fn clean_artist_title(raw_title: &str, raw_artist: &str) -> (String, String) {
@@ -193,7 +205,7 @@ impl App {
             .cloned()
             .unwrap_or_default();
 
-        let client = SoundCloudClient::new();
+        let client = SoundCloudClient::new(config.client_id.clone());
         let mut audio_player = AudioPlayer::new();
         audio_player.set_volume(config.volume);
         let (command_tx, command_rx) = unbounded_channel();
@@ -306,7 +318,75 @@ impl App {
             },
             last_mpris_update: std::time::Instant::now(),
             discord_rpc: crate::discord::DiscordRpcManager::new(),
+
+            me: None,
+            liked_ids: HashSet::new(),
+            reposted_ids: HashSet::new(),
         }
+    }
+
+    pub fn is_liked(&self, track_id: u64) -> bool {
+        self.liked_ids.contains(&track_id)
+    }
+
+    pub fn is_reposted(&self, track_id: u64) -> bool {
+        self.reposted_ids.contains(&track_id)
+    }
+
+    /// Likes or unlikes a track. The UI updates at once; a failed request puts it back
+    /// (see `revert_like`).
+    pub fn toggle_like(&mut self, track: &Track) {
+        let Some(my_id) = self.me.as_ref().map(|u| u.id) else {
+            self.status_message = "Not signed in: log in to soundcloud.com in your browser, then restart.".to_string();
+            return;
+        };
+        let track_id = track.id;
+        let liked = self.liked_ids.insert(track_id);
+        if !liked {
+            self.liked_ids.remove(&track_id);
+        }
+        let verb = if liked { "Liked" } else { "Unliked" };
+        self.status_message = format!("{} '{}'.", verb, track.display_title());
+
+        let client = self.client.clone();
+        let tx = self.command_tx.clone();
+        tokio::spawn(async move {
+            if let Err(error) = client.set_track_liked(my_id, track_id, liked).await {
+                let _ = tx.send(AppCommand::LikeFailed { track_id, error });
+            }
+        });
+    }
+
+    pub fn revert_like(&mut self, track_id: u64, error: String) {
+        if !self.liked_ids.remove(&track_id) {
+            self.liked_ids.insert(track_id);
+        }
+        self.status_message = format!("Couldn't update like: {error}");
+    }
+
+    /// Opens the track on soundcloud.com, for actions the app can't do itself. Reposting is
+    /// one: SoundCloud's bot check (DataDome) blocks it from outside the browser.
+    pub fn open_in_browser(&mut self, track: &Track) {
+        let Some(url) = track.permalink_url.as_deref() else {
+            self.status_message = "This track has no SoundCloud page.".to_string();
+            return;
+        };
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else if cfg!(target_os = "windows") {
+            "explorer"
+        } else {
+            "xdg-open"
+        };
+        self.status_message = match std::process::Command::new(opener)
+            .arg(url)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(_) => format!("Opened '{}' in your browser.", track.display_title()),
+            Err(e) => format!("Couldn't open browser: {e}"),
+        };
     }
 
     pub fn tick_mpris(&mut self) {

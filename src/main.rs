@@ -1,11 +1,8 @@
 mod app;
 mod audio;
-mod color;
 mod config;
 mod discord;
 mod event;
-mod gradient;
-mod reactive;
 mod soundcloud;
 mod theme;
 mod ui;
@@ -40,8 +37,31 @@ mod run_loop {
     }
 }
 
+/// `--whoami`: signs in as the app would and reports the account, without starting the TUI.
+async fn whoami() -> Result<(), Box<dyn Error>> {
+    let mut config = config::Config::load();
+    let client = soundcloud::SoundCloudClient::new(config.client_id.clone());
+    let sign_in = client.sign_in(config.oauth_token.clone()).await;
+    config.client_id = client.client_id();
+    config.save();
+    let sign_in = sign_in?;
+    println!(
+        "Signed in as {} (id {}) via {}",
+        sign_in.user.username.as_deref().unwrap_or("?"),
+        sign_in.user.id,
+        sign_in.source
+    );
+    println!("Liked tracks: {}", client.liked_track_ids().await?.len());
+    println!("Reposted tracks: {}", client.reposted_track_ids().await?.len());
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    if std::env::args().any(|a| a == "--whoami") {
+        return whoami().await;
+    }
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -59,27 +79,45 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut app = App::new();
 
-    // Perform initial SoundCloud tracks fetch in background based on config
+    // Sign in, then load the configured user's tracks, or the signed-in user's own.
     let client = app.client.clone();
     let tx = app.command_tx.clone();
-    let user_config = app
-        .config
-        .username_or_url
-        .clone()
-        .unwrap_or_else(|| "soundcloud".to_string());
+    let user_config = app.config.username_or_url.clone();
+    let manual_token = app.config.oauth_token.clone();
 
     tokio::spawn(async move {
-        if let Ok(u) = client.resolve_user(&user_config).await {
-            if let Ok(tracks) = client.get_user_likes(u.id, 200).await {
-                if !tracks.is_empty() {
-                    let _ = tx.send(app::AppCommand::UpdateTracks(tracks));
-                    return;
-                }
+        let my_id = match client.sign_in(manual_token).await {
+            Ok(sign_in) => {
+                let my_id = sign_in.user.id;
+                let _ = tx.send(app::AppCommand::SignedIn(sign_in));
+                let (c, t) = (client.clone(), tx.clone());
+                tokio::spawn(async move {
+                    if let Ok(ids) = c.liked_track_ids().await {
+                        let _ = t.send(app::AppCommand::LikedIds(ids));
+                    }
+                });
+                let (c, t) = (client.clone(), tx.clone());
+                tokio::spawn(async move {
+                    if let Ok(ids) = c.reposted_track_ids().await {
+                        let _ = t.send(app::AppCommand::RepostedIds(ids));
+                    }
+                });
+                Some(my_id)
             }
-        }
+            Err(e) => {
+                let _ = tx.send(app::AppCommand::SignInFailed(e));
+                None
+            }
+        };
 
-        if let Ok(tracks) = client.search_tracks("SoFaygo", 50).await {
-            let _ = tx.send(app::AppCommand::UpdateTracks(tracks));
+        let user_id = match user_config {
+            Some(handle) => client.resolve_user(&handle).await.ok().map(|u| u.id),
+            None => my_id,
+        };
+        if let Some(id) = user_id {
+            if let Ok(tracks) = client.get_user_likes(id, 200).await {
+                let _ = tx.send(app::AppCommand::UpdateTracks(tracks));
+            }
         }
     });
 
@@ -106,9 +144,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 app::AppCommand::UpdateCoverArt(img_bytes) => {
                     if let Ok(img) = image::load_from_memory(&img_bytes) {
-                        let reactive_theme = reactive::derive_theme(&img, "Album Art".to_string());
-                        // app.theme = reactive_theme;
-                        app.current_image = Some(img.clone());
+                        app.current_image = Some(img);
 
                         let mut lock = app.cover_art.lock().unwrap();
                         *lock = None;
@@ -139,10 +175,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     app.update_mpris_playback();
                 }
 
-                app::AppCommand::ToggleLikeTrack(_track_id) => {
-                    app.status_message =
-                        "Track actions (like/unlike) disabled in clean read-only mode.".to_string();
+                app::AppCommand::SignedIn(sign_in) => {
+                    app.status_message = format!(
+                        "Signed in as {} via {}.",
+                        sign_in.user.username.as_deref().unwrap_or("?"),
+                        sign_in.source
+                    );
+                    app.me = Some(sign_in.user);
+                    app.config.client_id = app.client.client_id();
+                    app.config.save();
                 }
+                app::AppCommand::SignInFailed(e) => {
+                    app.status_message = e;
+                    app.config.client_id = app.client.client_id();
+                    app.config.save();
+                }
+                app::AppCommand::LikedIds(ids) => app.liked_ids = ids.into_iter().collect(),
+                app::AppCommand::RepostedIds(ids) => app.reposted_ids = ids.into_iter().collect(),
+                app::AppCommand::LikeFailed { track_id, error } => app.revert_like(track_id, error),
             }
         }
 
@@ -162,6 +212,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             break;
         }
     }
+
+    app.config.client_id = app.client.client_id();
+    app.config.save();
 
     // Restore terminal
     disable_raw_mode()?;

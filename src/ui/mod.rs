@@ -70,10 +70,14 @@ fn render_header(app: &App, area: Rect, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(wordmark), area);
 
     // View Tabs (Right Aligned)
-    let mut spans = vec![Span::styled(
-        "←→ ",
-        Style::default().fg(app.theme.foreground_dim),
-    )];
+    let account = match &app.me {
+        Some(me) => format!("@{}   ", me.username.as_deref().unwrap_or("?")),
+        None => "signed out   ".to_string(),
+    };
+    let mut spans = vec![
+        Span::styled(account, Style::default().fg(app.theme.foreground_dim)),
+        Span::styled("←→ ", Style::default().fg(app.theme.foreground_dim)),
+    ];
     for (i, v) in RightView::ALL.iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled(

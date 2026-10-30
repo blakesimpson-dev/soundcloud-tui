@@ -195,9 +195,13 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                 KeyCode::Left | KeyCode::Char('h') => app.previous_pane(),
                 KeyCode::Down | KeyCode::Char('j') => app.select_next_item(),
                 KeyCode::Up | KeyCode::Char('k') => app.select_previous_item(),
-                KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Char('L') => {
-                    if let Some(track) = app.currently_playing.as_ref().or(app.tracks.get(app.selected_track_index)) {
-                        let _ = app.command_tx.send(crate::app::AppCommand::ToggleLikeTrack(track.id));
+                KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Char('L') | KeyCode::Char('R') => {
+                    if let Some(track) = app.currently_playing.as_ref().or(app.tracks.get(app.selected_track_index)).cloned() {
+                        if key.code == KeyCode::Char('R') {
+                            app.open_in_browser(&track);
+                        } else {
+                            app.toggle_like(&track);
+                        }
                     }
                 }
                 KeyCode::Char('t') => app.theme_picker_open = true,

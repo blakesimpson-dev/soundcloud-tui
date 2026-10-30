@@ -77,18 +77,18 @@ pub fn render_left_sidebar(app: &App, area: Rect, frame: &mut Frame) {
 }
 
 pub fn render_center_tracks(app: &App, area: Rect, frame: &mut Frame) {
-    let header = Row::new(vec!["No.", "Title", "Plays", "Duration"])
+    let header = Row::new(vec!["No.", "", "Title", "Plays", "Duration"])
         .style(Style::default().fg(app.theme.foreground_dim).add_modifier(Modifier::BOLD));
 
     let is_focused = app.active_pane == ActivePane::RightMain;
 
     let rows: Vec<Row> = if app.tracks.is_empty() {
         vec![
-            Row::new(vec!["1.", "North Star (Future Funk Squad Remix)", "14", "05:24"]),
-            Row::new(vec!["2.", "Everything Is Burning", "16", "04:23"]).style(Style::default().fg(app.theme.primary)),
-            Row::new(vec!["3.", "Oh Cruel Darkness Embrace Me", "4", "04:08"]),
-            Row::new(vec!["4.", "Dead In This House", "7", "04:48"]),
-            Row::new(vec!["5.", "Triggers", "5", "04:18"]),
+            Row::new(vec!["1.", "", "North Star (Future Funk Squad Remix)", "14", "05:24"]),
+            Row::new(vec!["2.", "", "Everything Is Burning", "16", "04:23"]).style(Style::default().fg(app.theme.primary)),
+            Row::new(vec!["3.", "", "Oh Cruel Darkness Embrace Me", "4", "04:08"]),
+            Row::new(vec!["4.", "", "Dead In This House", "7", "04:48"]),
+            Row::new(vec!["5.", "", "Triggers", "5", "04:18"]),
         ]
     } else {
         app.tracks
@@ -99,7 +99,13 @@ pub fn render_center_tracks(app: &App, area: Rect, frame: &mut Frame) {
                 let plays = track.playback_count.unwrap_or(0).to_string();
                 let dur = track.formatted_duration();
 
-                let row = Row::new(vec![num, track.display_title().to_string(), plays, dur]);
+                let marks = format!(
+                    "{}{}",
+                    if app.is_liked(track.id) { "♥" } else { " " },
+                    if app.is_reposted(track.id) { "↻" } else { " " }
+                );
+
+                let row = Row::new(vec![num, marks, track.display_title().to_string(), plays, dur]);
                 if is_focused && idx == app.selected_track_index {
                     row.style(
                         Style::default()
@@ -118,6 +124,7 @@ pub fn render_center_tracks(app: &App, area: Rect, frame: &mut Frame) {
 
     let widths = [
         Constraint::Length(5),
+        Constraint::Length(2),
         Constraint::Min(25),
         Constraint::Length(10),
         Constraint::Length(10),
