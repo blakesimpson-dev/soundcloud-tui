@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
@@ -8,8 +8,25 @@ use ratatui::{
 
 use crate::app::{ActivePane, App};
 
+/// A synced lyric line's color by its distance from the current line: the current line in the
+/// primary color, the rest fading from the foreground to the dimmed foreground.
+fn lyric_color(app: &App, dist: u32) -> Color {
+    if dist == 0 {
+        return app.theme.primary;
+    }
+    match (app.theme.foreground, app.theme.foreground_dim) {
+        (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => {
+            let t = 1.0 - 0.75_f32.powi(dist as i32 - 1);
+            let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
+            Color::Rgb(mix(r1, r2), mix(g1, g2), mix(b1, b2))
+        }
+        _ if dist == 1 => app.theme.foreground,
+        _ => app.theme.foreground_dim,
+    }
+}
+
 pub fn render_lyrics_view(app: &App, area: Rect, frame: &mut Frame) {
-    let title = if let Some(track) = app.currently_playing.as_ref().or(app.tracks.get(app.selected_track_index)) {
+    let title = if let Some(track) = app.currently_playing.as_ref().or(app.selected_track()) {
         track.display_title().to_string()
     } else {
         "No Track Selected".to_string()
@@ -48,22 +65,7 @@ pub fn render_lyrics_view(app: &App, area: Rect, frame: &mut Frame) {
         for (idx, line) in app.synced_lyrics.iter().enumerate() {
             let dist = (idx as i64 - active_idx as i64).abs();
 
-            let color = if dist == 0 {
-                app.theme.primary
-            } else {
-                let factor = (0.75_f32).powi(dist as i32);
-                let min_val = 35.0;
-                let (r, g, b) = match app.theme.foreground {
-                    ratatui::style::Color::Rgb(r, g, b) => (r as f32, g as f32, b as f32),
-                    _ => (220.0, 220.0, 240.0),
-                };
-                let new_r = (min_val + (r - min_val) * factor) as u8;
-                let new_g = (min_val + (g - min_val) * factor) as u8;
-                let new_b = (min_val + (b - min_val) * factor) as u8;
-                ratatui::style::Color::Rgb(new_r, new_g, new_b)
-            };
-
-            let mut style = Style::default().fg(color);
+            let mut style = Style::default().fg(lyric_color(app, dist as u32));
             if dist == 0 {
                 style = style.add_modifier(Modifier::BOLD);
             }
@@ -80,7 +82,7 @@ pub fn render_lyrics_view(app: &App, area: Rect, frame: &mut Frame) {
     } else {
         let desc_text = if let Some(lyrics) = &app.current_lyrics {
             lyrics.clone()
-        } else if let Some(track) = app.currently_playing.as_ref().or(app.tracks.get(app.selected_track_index)) {
+        } else if let Some(track) = app.currently_playing.as_ref().or(app.selected_track()) {
             track.description.clone().unwrap_or_else(|| "No description available.".to_string())
         } else {
             "No lyrics or description available.".to_string()
@@ -112,31 +114,9 @@ pub fn render_lyrics_view(app: &App, area: Rect, frame: &mut Frame) {
             Line::from(""),
         ];
 
-        for (idx, line) in lines.iter().enumerate() {
-            let dist = (idx as i64 - active_idx as i64).abs();
-
-            let color = if dist == 0 {
-                app.theme.primary
-            } else {
-                let factor = (0.75_f32).powi(dist as i32);
-                let min_val = 35.0;
-                let (r, g, b) = match app.theme.foreground {
-                    ratatui::style::Color::Rgb(r, g, b) => (r as f32, g as f32, b as f32),
-                    _ => (220.0, 220.0, 240.0),
-                };
-                let new_r = (min_val + (r - min_val) * factor) as u8;
-                let new_g = (min_val + (g - min_val) * factor) as u8;
-                let new_b = (min_val + (b - min_val) * factor) as u8;
-                ratatui::style::Color::Rgb(new_r, new_g, new_b)
-            };
-
-            let mut style = Style::default().fg(color);
-            if dist == 0 {
-                style = style.add_modifier(Modifier::BOLD);
-            }
-
-            lyrics_lines.push(Line::from(Span::styled(line.to_string(), style)));
-        }
+        // Not timed to the track, so nothing is highlighted; the text just scrolls along with it.
+        let style = Style::default().fg(app.theme.foreground);
+        lyrics_lines.extend(lines.iter().map(|line| Line::from(Span::styled(line.to_string(), style))));
 
         let visible_height = area.height as usize;
         let scroll_offset = (active_idx + 2).saturating_sub(visible_height / 2) as u16;
@@ -246,8 +226,9 @@ pub fn render_queue_view(app: &App, area: Rect, frame: &mut Frame) {
         )));
     }
 
-    let mut state = ListState::default();
-    state.select(Some(app.queue_index));
+    let mut state = ListState::default()
+        .with_offset(app.list_offsets.queue.get())
+        .with_selected(Some(app.queue_index));
 
     let list = List::new(items)
         .highlight_style(
@@ -257,4 +238,5 @@ pub fn render_queue_view(app: &App, area: Rect, frame: &mut Frame) {
         );
 
     frame.render_stateful_widget(list, chunks[1], &mut state);
+    app.list_offsets.queue.set(state.offset());
 }
