@@ -7,10 +7,21 @@ pub struct Config {
     pub oauth_token: Option<String>,
     /// Cached so startup skips scraping one from soundcloud.com.
     pub client_id: Option<String>,
+    /// Legacy: the user shown at startup, from before `last_view`. Read, no longer written.
     pub username_or_url: Option<String>,
+    /// What was on screen at quit, reopened at startup.
+    pub last_view: Option<SavedView>,
     pub theme: String,
     pub volume: u64,
     pub large_art: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum SavedView {
+    User { id: u64 },
+    Search { query: String },
+    Playlist { id: u64 },
 }
 
 impl Default for Config {
@@ -19,6 +30,7 @@ impl Default for Config {
             oauth_token: None,
             client_id: None,
             username_or_url: None,
+            last_view: None,
             theme: "Monochrome Dark".to_string(),
             volume: 65,
             large_art: true,

@@ -107,15 +107,10 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                         app.is_searching = false;
                         let query = app.search_input.clone();
                         app.search_input.clear();
+                        let query = query.trim();
                         if !query.is_empty() {
-                            let client = app.client.clone();
-                            let tx = app.command_tx.clone();
-                            app.status_message = format!("Searching SoundCloud for '{}'...", query);
-                            tokio::spawn(async move {
-                                if let Ok(tracks) = client.search_tracks(&query, 50).await {
-                                    let _ = tx.send(crate::app::AppCommand::UpdateTracks(tracks));
-                                }
-                            });
+                            app.open_context(crate::browse::Context::Search(query.to_string()));
+                            app.active_pane = crate::app::ActivePane::RightMain;
                         }
                     }
                     _ => {}
@@ -141,19 +136,15 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                         let handle = app.user_input.trim().to_string();
                         app.user_input.clear();
                         if !handle.is_empty() {
-                            app.user_handle = Some(handle.clone());
                             let client = app.client.clone();
                             let tx = app.command_tx.clone();
-
-                            app.config.username_or_url = Some(handle.clone());
-                            app.config.save();
-                            app.status_message = format!("Fetching SoundCloud likes for '{}'...", handle);
+                            app.status_message = format!("Looking up '{}'...", handle);
                             tokio::spawn(async move {
-                                if let Ok(user) = client.resolve_user(&handle).await {
-                                    if let Ok(tracks) = client.get_user_likes(user.id, 200).await {
-                                        let _ = tx.send(crate::app::AppCommand::UpdateTracks(tracks));
-                                    }
-                                }
+                                let command = match client.resolve_user(&handle).await {
+                                    Ok(user) => crate::app::AppCommand::OpenContext(crate::browse::Context::User(user)),
+                                    Err(e) => crate::app::AppCommand::Status(format!("Couldn't open '{handle}': {e}")),
+                                };
+                                let _ = tx.send(command);
                             });
                         }
                     }
@@ -196,7 +187,7 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                 KeyCode::Down | KeyCode::Char('j') => app.select_next_item(),
                 KeyCode::Up | KeyCode::Char('k') => app.select_previous_item(),
                 KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Char('L') | KeyCode::Char('R') => {
-                    if let Some(track) = app.currently_playing.as_ref().or(app.tracks.get(app.selected_track_index)).cloned() {
+                    if let Some(track) = app.currently_playing.as_ref().or(app.selected_track()).cloned() {
                         if key.code == KeyCode::Char('R') {
                             app.open_in_browser(&track);
                         } else {
@@ -228,9 +219,9 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                 KeyCode::Char('b') | KeyCode::Char('B') => app.play_prev_track(),
                 KeyCode::Char('a') | KeyCode::Char('A') => {
                     let target_track = if app.active_pane == crate::app::ActivePane::RightMain && app.current_view == crate::app::RightView::Tracks {
-                        app.tracks.get(app.selected_track_index).cloned()
+                        app.selected_track().cloned()
                     } else {
-                        app.currently_playing.clone().or_else(|| app.tracks.get(app.selected_track_index).cloned())
+                        app.currently_playing.clone().or_else(|| app.selected_track().cloned())
                     };
 
                     if let Some(track) = target_track {
@@ -254,9 +245,11 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                     } else if app.current_view == crate::app::RightView::Queue {
                         app.play_queue_index();
                     } else {
-                        app.play_selected_track();
+                        app.activate_selected();
                     }
                 }
+                KeyCode::Char(c @ '1'..='9') => app.select_tab(c as usize - '1' as usize),
+                KeyCode::Esc | KeyCode::Backspace => app.go_back(),
                 KeyCode::Char('/') => {
                     app.is_searching = true;
                     app.search_input.clear();

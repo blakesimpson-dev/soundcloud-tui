@@ -22,7 +22,7 @@ pub fn render_now_strip(app: &App, area: Rect, frame: &mut Frame) {
     let loop_enabled = state.loop_enabled.load(Ordering::SeqCst);
 
     // Row 1: Track title & Volume meter on far right
-    let shown = app.currently_playing.as_ref().or(app.tracks.get(app.selected_track_index));
+    let shown = app.currently_playing.as_ref().or(app.selected_track());
     let (track_title, artist_name) = match shown {
         Some(track) => (track.display_title(), track.display_artist()),
         None => ("Everything Is Burning", "IAMX"),

@@ -41,7 +41,7 @@ pub fn render_search_popup(app: &App, frame: &mut Frame) {
     let text_spans = if is_empty {
         vec![
             Span::styled("🔍 ", Style::default().fg(app.theme.primary)),
-            Span::styled("Search tracks or artists on SoundCloud...", Style::default().fg(app.theme.foreground_dim)),
+            Span::styled("Search tracks, users and playlists on SoundCloud...", Style::default().fg(app.theme.foreground_dim)),
             Span::styled(" █", Style::default().fg(app.theme.primary).add_modifier(Modifier::RAPID_BLINK)),
         ]
     } else {
@@ -89,7 +89,7 @@ pub fn render_user_popup(app: &App, frame: &mut Frame) {
     let text_spans = if is_empty {
         vec![
             Span::styled("@ ", Style::default().fg(app.theme.primary)),
-            Span::styled("Enter SoundCloud username, profile URL, or OAuth token...", Style::default().fg(app.theme.foreground_dim)),
+            Span::styled("Open a profile: SoundCloud username or profile URL...", Style::default().fg(app.theme.foreground_dim)),
             Span::styled(" █", Style::default().fg(app.theme.primary).add_modifier(Modifier::RAPID_BLINK)),
         ]
     } else {
@@ -173,8 +173,9 @@ pub fn render_theme_popup(app: &App, frame: &mut Frame) {
         })
         .collect();
 
-    let mut state = ListState::default();
-    state.select(Some(app.theme_picker_selected));
+    let mut state = ListState::default()
+        .with_offset(app.list_offsets.themes.get())
+        .with_selected(Some(app.theme_picker_selected));
 
     let list = List::new(items)
         .block(block)
@@ -185,6 +186,7 @@ pub fn render_theme_popup(app: &App, frame: &mut Frame) {
         );
 
     frame.render_stateful_widget(list, area, &mut state);
+    app.list_offsets.themes.set(state.offset());
 }
 
 pub fn render_filter_popup(app: &App, frame: &mut Frame) {
@@ -256,7 +258,7 @@ pub fn render_help_popup(app: &App, frame: &mut Frame) {
         return;
     }
 
-    let area = top_centered_rect(70, 24, frame.area());
+    let area = top_centered_rect(70, 27, frame.area());
     frame.render_widget(Clear, area);
 
     let title_line = Line::from(vec![
@@ -310,12 +312,24 @@ pub fn render_help_popup(app: &App, frame: &mut Frame) {
             Span::styled("Switch pane focus (Sidebar / Main View)", Style::default().fg(app.theme.foreground_dim)),
         ]),
         Line::from(vec![
+            Span::styled("  Enter    ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Play track, or open playlist / user", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  1-9      ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Switch tab (Likes, Uploads, Reposts... / search results)", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Esc / ⌫  ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Back to the previous page", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(vec![
             Span::styled("  a        ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
             Span::styled("Add highlighted track to Queue", Style::default().fg(app.theme.foreground_dim)),
         ]),
         Line::from(vec![
             Span::styled("  Tab / <> ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
-            Span::styled("Switch views (Now Playing, Lyrics, Queue, Tracks)", Style::default().fg(app.theme.foreground_dim)),
+            Span::styled("Switch views (Now Playing, Details, Queue, Browse)", Style::default().fg(app.theme.foreground_dim)),
         ]),
         Line::from(""),
         Line::from(vec![
@@ -323,11 +337,11 @@ pub fn render_help_popup(app: &App, frame: &mut Frame) {
         ]),
         Line::from(vec![
             Span::styled("  /        ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
-            Span::styled("Instant search SoundCloud tracks & artists", Style::default().fg(app.theme.foreground_dim)),
+            Span::styled("Search tracks, users & playlists", Style::default().fg(app.theme.foreground_dim)),
         ]),
         Line::from(vec![
             Span::styled("  u        ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
-            Span::styled("Set SoundCloud user handle / profile URL", Style::default().fg(app.theme.foreground_dim)),
+            Span::styled("Open a user's profile by name or URL", Style::default().fg(app.theme.foreground_dim)),
         ]),
         Line::from(vec![
             Span::styled("  t        ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),

@@ -31,7 +31,7 @@ pub fn render(app: &App, frame: &mut Frame) {
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // Header (Wordmark + Views)
+            Constraint::Length(2), // Header (Wordmark + Views, Page + Status)
             Constraint::Length(1), // Spacer
             Constraint::Min(6),    // Main Body
             Constraint::Length(1), // Spacer
@@ -54,22 +54,12 @@ pub fn render(app: &App, frame: &mut Frame) {
 }
 
 fn render_header(app: &App, area: Rect, frame: &mut Frame) {
-    // Header Wordmark Logo
-    let wordmark = Line::from(vec![
-        Span::styled(
-            "ＳＯＵＮＤＣＬＯＵＤ",
-            Style::default()
-                .fg(app.theme.primary)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("   {}", app.status_message),
-            Style::default().fg(app.theme.foreground_dim),
-        ),
-    ]);
-    frame.render_widget(Paragraph::new(wordmark), area);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(area);
 
-    // View Tabs (Right Aligned)
+    // Row 1: wordmark, then account and view tabs on the right.
     let account = match &app.me {
         Some(me) => format!("@{}   ", me.username.as_deref().unwrap_or("?")),
         None => "signed out   ".to_string(),
@@ -94,9 +84,30 @@ fn render_header(app: &App, area: Rect, frame: &mut Frame) {
         };
         spans.push(Span::styled(v.label(), style));
     }
+    let tabs = Line::from(spans);
+    frame.render_widget(Paragraph::new(tabs).alignment(Alignment::Right), rows[0]);
 
-    let tabs = Paragraph::new(Line::from(spans)).alignment(Alignment::Right);
-    frame.render_widget(tabs, area);
+    let wordmark = Line::from(Span::styled(
+        "ＳＯＵＮＤＣＬＯＵＤ",
+        Style::default()
+            .fg(app.theme.primary)
+            .add_modifier(Modifier::BOLD),
+    ));
+    frame.render_widget(Paragraph::new(wordmark), rows[0]);
+
+    // Row 2: the open page on the left, the status message on the right. The page title keeps
+    // its width; a long status message is cut off before reaching it.
+    let page = Line::from(Span::styled(
+        app.browser.frame().map(|f| f.context.title()).unwrap_or_default(),
+        Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD),
+    ));
+    let halves = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(page.width() as u16 + 3), Constraint::Min(0)])
+        .split(rows[1]);
+    frame.render_widget(Paragraph::new(page), halves[0]);
+    let status = Line::from(Span::styled(&app.status_message, Style::default().fg(app.theme.foreground_dim)));
+    frame.render_widget(Paragraph::new(status).alignment(Alignment::Right), halves[1]);
 }
 
 fn render_body(app: &App, area: Rect, frame: &mut Frame) {
