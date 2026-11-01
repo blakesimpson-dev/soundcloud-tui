@@ -43,7 +43,7 @@ pub fn render(app: &App, frame: &mut Frame) {
     render_header(app, main_layout[0], frame);
     render_body(app, main_layout[2], frame);
     render_now_strip(app, main_layout[4], frame);
-    render_footer(app, main_layout[5], frame);
+    frame.render_widget(Paragraph::new(footer_line(app)), main_layout[5]);
 
     // Overlays / Modals
     render_theme_popup(app, frame);
@@ -129,18 +129,29 @@ fn render_body(app: &App, area: Rect, frame: &mut Frame) {
     }
 }
 
-fn render_footer(app: &App, area: Rect, frame: &mut Frame) {
-    let help_line = Line::from(vec![
+fn footer_line(app: &App) -> Line<'static> {
+    let loop_enabled = app.audio_player.state().loop_enabled.load(std::sync::atomic::Ordering::SeqCst);
+    let (loop_label, loop_style) = if loop_enabled {
+        ("loop on  ", Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD))
+    } else {
+        ("loop  ", Style::default().fg(app.theme.foreground_dim))
+    };
+
+    Line::from(vec![
         Span::styled("⇥ ", Style::default().fg(app.theme.primary)),
         Span::styled("pane  ", Style::default().fg(app.theme.foreground_dim)),
         Span::styled("←→ ", Style::default().fg(app.theme.primary)),
         Span::styled("view  ", Style::default().fg(app.theme.foreground_dim)),
         Span::styled("r ", Style::default().fg(app.theme.primary)),
-        Span::styled("loop  ", Style::default().fg(app.theme.foreground_dim)),
+        Span::styled(loop_label, loop_style),
         Span::styled("/ ", Style::default().fg(app.theme.primary)),
         Span::styled("search  ", Style::default().fg(app.theme.foreground_dim)),
         Span::styled("␣ ", Style::default().fg(app.theme.primary)),
         Span::styled("play  ", Style::default().fg(app.theme.foreground_dim)),
+        Span::styled("b ", Style::default().fg(app.theme.primary)),
+        Span::styled("prev  ", Style::default().fg(app.theme.foreground_dim)),
+        Span::styled("n ", Style::default().fg(app.theme.primary)),
+        Span::styled("next  ", Style::default().fg(app.theme.foreground_dim)),
         Span::styled("+/- ", Style::default().fg(app.theme.primary)),
         Span::styled("vol  ", Style::default().fg(app.theme.foreground_dim)),
         Span::styled("f ", Style::default().fg(app.theme.primary)),
@@ -151,7 +162,5 @@ fn render_footer(app: &App, area: Rect, frame: &mut Frame) {
         Span::styled("user  ", Style::default().fg(app.theme.foreground_dim)),
         Span::styled("q ", Style::default().fg(app.theme.primary)),
         Span::styled("quit", Style::default().fg(app.theme.foreground_dim)),
-    ]);
-
-    frame.render_widget(Paragraph::new(help_line), area);
+    ])
 }

@@ -19,7 +19,6 @@ pub fn render_now_strip(app: &App, area: Rect, frame: &mut Frame) {
     let current_secs = state.current_secs.load(Ordering::SeqCst);
     let duration_secs = state.duration_secs.load(Ordering::SeqCst).max(1);
     let vol = state.volume.load(Ordering::SeqCst);
-    let loop_enabled = state.loop_enabled.load(Ordering::SeqCst);
 
     // Row 1: Track title & Volume meter on far right
     let shown = app.currently_playing.as_ref().or(app.selected_track());
@@ -49,11 +48,6 @@ pub fn render_now_strip(app: &App, area: Rect, frame: &mut Frame) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(artist_name, Style::default().fg(app.theme.foreground_dim)),
-        if loop_enabled {
-            Span::styled("  [LOOP] ", Style::default().fg(app.theme.foreground_dim))
-        } else {
-            Span::styled(" ", Style::default().fg(app.theme.foreground_dim))
-        },
     ]);
     frame.render_widget(Paragraph::new(title_line), rows[0]);
 
