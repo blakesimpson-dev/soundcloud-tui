@@ -139,7 +139,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     if let Err(e) = app.audio_player.play_url(&url) {
                         app.status_message = format!("Playback error: {}", e);
                     } else {
-                        app.status_message = "Playing track...".to_string();
+                        app.status_message = match app.skipped_tracks {
+                            0 => "Playing track...".to_string(),
+                            n => format!("Playing track... (skipped {n} unplayable)"),
+                        };
                     }
                 }
                 app::AppCommand::Page { collection, page } => app.add_page(collection, page),

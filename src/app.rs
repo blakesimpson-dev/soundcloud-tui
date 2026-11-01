@@ -2,7 +2,7 @@ use crate::audio::stream::TrackStream;
 use crate::audio::AudioPlayer;
 use crate::browse::{Browser, Collection, Context, Frame, Page};
 use crate::config::Config;
-use crate::soundcloud::client::SignIn;
+use crate::soundcloud::client::{is_playable, SignIn};
 use crate::soundcloud::{Entry, SoundCloudClient, Track, User};
 
 use std::collections::HashSet;
@@ -156,6 +156,8 @@ pub struct App {
     /// The last track played from `play_context`, which next/previous step from. Queued
     /// tracks play in between without moving it.
     pub last_context_track: Option<u64>,
+    /// How many unplayable tracks were stepped over to reach the one starting now.
+    pub skipped_tracks: usize,
 
     pub search_input: String,
     pub is_searching: bool,
@@ -273,6 +275,7 @@ impl App {
             play_context: Vec::new(),
             play_context_source: None,
             last_context_track: None,
+            skipped_tracks: 0,
 
             search_input: String::new(),
             is_searching: false,
@@ -493,6 +496,10 @@ impl App {
     pub fn play_queue_index(&mut self) {
         let q_tracks = self.get_queue_tracks();
         if let Some(track) = q_tracks.get(self.queue_index).cloned() {
+            if !is_playable(&track) {
+                self.status_message = unplayable_message(&track);
+                return;
+            }
             if let Some(pos) = self.queue.iter().position(|t| t.id == track.id) {
                 self.queue.drain(0..=pos);
             } else if self.play_context.iter().any(|t| t.id == track.id) {
@@ -505,32 +512,40 @@ impl App {
     }
 
     pub fn play_next_track(&mut self) {
-        if !self.queue.is_empty() {
+        let mut skipped = 0;
+        while !self.queue.is_empty() {
             let next_track = self.queue.remove(0);
-            self.play_track(next_track);
-            return;
+            if is_playable(&next_track) {
+                self.play_track(next_track);
+                self.skipped_tracks = skipped;
+                return;
+            }
+            skipped += 1;
         }
-        self.step_context(1);
+        self.step_context(1, skipped);
     }
 
     pub fn play_prev_track(&mut self) {
-        self.step_context(-1);
+        self.step_context(-1, 0);
     }
 
-    /// Plays the track `delta` places from the last context track, wrapping around.
-    fn step_context(&mut self, delta: isize) {
-        let len = self.play_context.len() as isize;
-        if len == 0 {
-            return;
+    /// Plays the first playable track stepping `delta` places at a time from the last context
+    /// track, wrapping around. `skipped` counts unplayable tracks already stepped over. If
+    /// there's nothing to play, whatever's playing carries on.
+    fn step_context(&mut self, delta: isize, skipped: usize) {
+        match next_playable(&self.play_context, self.context_position(), delta) {
+            Some((next, stepped_over)) => {
+                let track = self.play_context[next].clone();
+                self.last_context_track = Some(track.id);
+                self.select_track_row(track.id);
+                self.play_track(track);
+                self.skipped_tracks = skipped + stepped_over;
+            }
+            None if skipped > 0 || !self.play_context.is_empty() => {
+                self.status_message = "No playable tracks to skip to".to_string();
+            }
+            None => {}
         }
-        let next = match self.context_position() {
-            Some(pos) => (pos as isize + delta).rem_euclid(len) as usize,
-            None => 0,
-        };
-        let track = self.play_context[next].clone();
-        self.last_context_track = Some(track.id);
-        self.select_track_row(track.id);
-        self.play_track(track);
     }
 
     /// Selects the track's row if the list showing is the one playback steps through.
@@ -545,6 +560,9 @@ impl App {
     /// Plays the selected track, or opens the selected playlist or user.
     pub fn activate_selected(&mut self) {
         match self.selected_entry().cloned() {
+            Some(Entry::Track(track)) if !is_playable(&track) => {
+                self.status_message = unplayable_message(&track);
+            }
             Some(Entry::Track(track)) => {
                 self.play_context = self.rows.iter().filter_map(Entry::as_track).cloned().collect();
                 self.play_context_source = self.browser.collection();
@@ -558,6 +576,7 @@ impl App {
     }
 
     pub fn play_track(&mut self, track: Track) {
+        self.skipped_tracks = 0;
         self.currently_playing = Some(track.clone());
         self.update_mpris_metadata();
         self.current_lyrics = None;
@@ -955,5 +974,84 @@ impl App {
             self.config.theme = self.theme.name.clone();
             self.config.save();
         }
+    }
+}
+
+fn unplayable_message(track: &Track) -> String {
+    format!("Can't play '{}': No playable (unencrypted) stream", track.display_title())
+}
+
+/// The first playable track stepping `delta` places at a time from `current` (from the start if
+/// there's none), wrapping around so `current` itself comes last, and how many were stepped over.
+fn next_playable(tracks: &[Track], current: Option<usize>, delta: isize) -> Option<(usize, usize)> {
+    let len = tracks.len() as isize;
+    let start = current.map_or(0, |pos| pos as isize + delta);
+    (0..len)
+        .map(|step| (start + step * delta).rem_euclid(len) as usize)
+        .enumerate()
+        .find(|&(_, i)| is_playable(&tracks[i]))
+        .map(|(stepped_over, i)| (i, stepped_over))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A track offering `protocols`, as the API lists them.
+    fn track(protocols: &[&str]) -> Track {
+        let transcodings: Vec<_> = protocols
+            .iter()
+            .map(|p| serde_json::json!({"url": "https://example.com", "preset": "aac_160k", "format": {"protocol": p}}))
+            .collect();
+        serde_json::from_value(serde_json::json!({"id": 1, "media": {"transcodings": transcodings}})).unwrap()
+    }
+
+    fn plain() -> Track {
+        track(&["hls"])
+    }
+
+    fn encrypted() -> Track {
+        track(&["cbc-encrypted-hls", "ctr-encrypted-hls"])
+    }
+
+    #[test]
+    fn only_tracks_with_a_plain_stream_are_playable() {
+        assert!(is_playable(&plain()));
+        assert!(is_playable(&track(&["ctr-encrypted-hls", "progressive"])));
+        assert!(!is_playable(&encrypted()));
+        assert!(!is_playable(&track(&[])));
+        assert!(!is_playable(&serde_json::from_value(serde_json::json!({"id": 1})).unwrap()));
+    }
+
+    #[test]
+    fn stepping_passes_over_unplayable_tracks_in_either_direction() {
+        let tracks = [plain(), encrypted(), encrypted(), plain()];
+        assert_eq!(next_playable(&tracks, Some(0), 1), Some((3, 2)));
+        assert_eq!(next_playable(&tracks, Some(3), -1), Some((0, 2)));
+    }
+
+    #[test]
+    fn stepping_wraps_around() {
+        let tracks = [plain(), plain(), encrypted()];
+        assert_eq!(next_playable(&tracks, Some(1), 1), Some((0, 1)));
+        assert_eq!(next_playable(&tracks, Some(0), -1), Some((1, 1)));
+    }
+
+    #[test]
+    fn stepping_starts_from_the_first_track_without_a_position() {
+        let tracks = [encrypted(), plain()];
+        assert_eq!(next_playable(&tracks, None, 1), Some((1, 1)));
+    }
+
+    #[test]
+    fn the_only_playable_track_is_reached_last() {
+        let tracks = [plain(), encrypted()];
+        assert_eq!(next_playable(&tracks, Some(0), 1), Some((0, 1)));
+    }
+
+    #[test]
+    fn stepping_finds_nothing_when_no_track_is_playable() {
+        assert_eq!(next_playable(&[encrypted(), encrypted()], Some(0), 1), None);
+        assert_eq!(next_playable(&[], None, 1), None);
     }
 }

@@ -308,29 +308,10 @@ impl SoundCloudClient {
     /// Where to download the track's audio from, in the best format it's available in.
     pub async fn stream_source(&self, track: &Track) -> Result<crate::audio::stream::Source, String> {
         use crate::audio::stream::Source;
-        let transcodings = track
-            .media
-            .as_ref()
-            .and_then(|m| m.transcodings.as_ref())
-            .ok_or_else(|| "No transcodings found for track".to_string())?;
-
-        let mut ranked: Vec<(u32, &str, bool)> = transcodings
-            .iter()
-            .filter_map(|t| {
-                // Encrypted streams (DRM) can't be played; mpv has no key for them.
-                let hls = match t.format.as_ref()?.protocol.as_deref()? {
-                    "hls" => true,
-                    "progressive" => false,
-                    _ => return None,
-                };
-                Some((stream_rank(t.preset.as_deref().unwrap_or(""))?, t.url.as_deref()?, hls))
-            })
-            .collect();
-        ranked.sort_by(|a, b| b.0.cmp(&a.0));
 
         // A format can be listed and still fail to resolve; fall through to the next best.
         let mut last_err = "No playable (unencrypted) stream".to_string();
-        for (_, url, hls) in ranked {
+        for (url, hls) in plain_streams(track) {
             match self.get_request::<StreamResponse>(url, &[]).await {
                 Ok(StreamResponse { url: Some(stream) }) if hls => return Ok(Source::Hls(stream)),
                 Ok(StreamResponse { url: Some(stream) }) => return Ok(Source::Progressive(stream)),
@@ -340,6 +321,30 @@ impl SoundCloudClient {
         }
         Err(last_err)
     }
+}
+
+/// Whether the track has a stream the app can play. Many only come encrypted.
+pub fn is_playable(track: &Track) -> bool {
+    !plain_streams(track).is_empty()
+}
+
+/// The track's streams the app can play, best first: each one's URL and whether it's HLS.
+fn plain_streams(track: &Track) -> Vec<(&str, bool)> {
+    let transcodings = track.media.as_ref().and_then(|m| m.transcodings.as_deref()).unwrap_or_default();
+    let mut ranked: Vec<(u32, &str, bool)> = transcodings
+        .iter()
+        .filter_map(|t| {
+            // Encrypted streams (DRM) can't be played; mpv has no key for them.
+            let hls = match t.format.as_ref()?.protocol.as_deref()? {
+                "hls" => true,
+                "progressive" => false,
+                _ => return None,
+            };
+            Some((stream_rank(t.preset.as_deref().unwrap_or(""))?, t.url.as_deref()?, hls))
+        })
+        .collect();
+    ranked.sort_by(|a, b| b.0.cmp(&a.0));
+    ranked.into_iter().map(|(_, url, hls)| (url, hls)).collect()
 }
 
 /// How good a stream format is, higher is better: AAC by bitrate (`aac_256k` is Go+ HQ), then
