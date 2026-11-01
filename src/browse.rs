@@ -121,12 +121,20 @@ pub struct Listing {
     pub error: Option<String>,
 }
 
+/// Where a list was left: its selected entry and how far it was scrolled.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ListPosition {
+    pub entry: (u8, u64),
+    pub offset: usize,
+}
+
 /// A page in the navigation stack.
 pub struct Frame {
     pub context: Context,
     pub tab: usize,
-    /// The selected row of each tab, kept while switching between them.
-    pub selected: Vec<usize>,
+    /// Where each list was left, by tab and chosen artist (`None` for all artists). A list with
+    /// no entry here hasn't been visited, so it starts at the top.
+    pub positions: HashMap<(usize, Option<String>), ListPosition>,
 }
 
 #[derive(Default)]

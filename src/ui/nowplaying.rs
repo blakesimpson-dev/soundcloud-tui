@@ -16,7 +16,7 @@ const ART_MIN_ROWS: u16 = 4;
 const INFO_ROWS: u16 = 3;
 /// The empty rows above and below the art.
 const ART_GAPS: u16 = 2;
-/// Columns kept clear either side of the art, so it doesn't touch the sidebar's selection.
+/// Columns kept clear either side of the art, so it doesn't touch the pane's border.
 const ART_SIDE_MARGIN: u16 = 1;
 
 /// Where the now playing view's parts go; `None` if a part doesn't fit.

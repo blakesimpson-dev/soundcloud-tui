@@ -1,6 +1,6 @@
 use crate::audio::stream::TrackStream;
 use crate::audio::AudioPlayer;
-use crate::browse::{Browser, Collection, Context, Frame, Page};
+use crate::browse::{Browser, Collection, Context, Frame, ListPosition, Page};
 use crate::config::Config;
 use crate::soundcloud::client::{is_playable, SignIn};
 use crate::soundcloud::{Entry, SoundCloudClient, Track, User};
@@ -729,10 +729,9 @@ impl App {
             return;
         }
         self.save_selection();
-        let tabs = context.tabs().len();
         self.config.last_view = Some(context.saved());
         self.config.save();
-        self.browser.stack.push(Frame { context, tab: 0, selected: vec![0; tabs] });
+        self.browser.stack.push(Frame { context, tab: 0, positions: Default::default() });
         self.current_view = RightView::Tracks;
         self.show_tab();
     }
@@ -761,13 +760,43 @@ impl App {
         self.show_tab();
     }
 
-    fn save_selection(&mut self) {
-        let row = self.selected_row;
-        if let Some(frame) = self.browser.stack.last_mut() {
-            if let Some(slot) = frame.selected.get_mut(frame.tab) {
-                *slot = row;
-            }
+    /// The artist the list is filtered to, if any.
+    fn chosen_artist(&self) -> Option<String> {
+        if self.selected_left_index > 0 {
+            self.left_items.get(self.selected_left_index).cloned()
+        } else {
+            None
         }
+    }
+
+    /// Remembers where the list showing was left.
+    fn save_selection(&mut self) {
+        let artist = self.chosen_artist();
+        let position = self.selected_entry().map(|entry| ListPosition {
+            entry: entry.key(),
+            offset: self.list_offsets.rows.get(),
+        });
+        if let (Some(frame), Some(position)) = (self.browser.stack.last_mut(), position) {
+            frame.positions.insert((frame.tab, artist), position);
+        }
+    }
+
+    /// Puts the list showing back where it was left, or at the top on a first visit.
+    fn restore_selection(&mut self) {
+        let artist = self.chosen_artist();
+        let saved = self.browser.frame().and_then(|f| f.positions.get(&(f.tab, artist)));
+        let (row, offset) = restored_position(&self.rows, saved);
+        self.selected_row = row;
+        self.list_offsets.rows.set(offset);
+    }
+
+    /// Filters the list to the artist at `index`, keeping each artist's list position separate.
+    fn select_artist(&mut self, index: usize) {
+        self.save_selection();
+        self.selected_left_index = index;
+        self.apply_filters_and_sort();
+        self.restore_selection();
+        self.current_view = RightView::Tracks;
     }
 
     /// Shows the current tab: starts loading it if it isn't (or retries it if it failed), and
@@ -780,22 +809,21 @@ impl App {
         }
         self.selected_left_index = 0;
         self.list_offsets.artists.set(0);
-        self.list_offsets.rows.set(0);
         self.update_artist_list();
         self.apply_filters_and_sort();
-        self.selected_row = self
-            .browser
-            .frame()
-            .and_then(|f| f.selected.get(f.tab).copied())
-            .unwrap_or(0)
-            .min(self.rows.len().saturating_sub(1));
+        self.restore_selection();
     }
 
     pub fn add_page(&mut self, collection: Collection, page: Page) {
         self.browser.add_page(collection.clone(), page);
         if self.browser.collection() == Some(collection) {
+            // A sorted list can reorder as it loads; a cursor at the top stays at the top.
+            let at_top = self.selected_row == 0;
             self.update_artist_list();
             self.apply_filters_and_sort();
+            if at_top {
+                self.selected_row = 0;
+            }
             self.load_more_if_near_end();
         }
     }
@@ -845,11 +873,7 @@ impl App {
             0
         };
 
-        let selected_artist = if self.selected_left_index > 0 {
-            self.left_items.get(self.selected_left_index).cloned()
-        } else {
-            None
-        };
+        let selected_artist = self.chosen_artist();
 
         let mut filtered: Vec<Entry> = self
             .browser
@@ -913,9 +937,7 @@ impl App {
         match self.active_pane {
             ActivePane::LeftSidebar => {
                 if !self.left_items.is_empty() {
-                    self.selected_left_index = (self.selected_left_index + 1) % self.left_items.len();
-                    self.apply_filters_and_sort();
-                    self.current_view = RightView::Tracks;
+                    self.select_artist((self.selected_left_index + 1) % self.left_items.len());
                 }
             }
             ActivePane::RightMain => {
@@ -938,13 +960,8 @@ impl App {
         match self.active_pane {
             ActivePane::LeftSidebar => {
                 if !self.left_items.is_empty() {
-                    if self.selected_left_index == 0 {
-                        self.selected_left_index = self.left_items.len() - 1;
-                    } else {
-                        self.selected_left_index -= 1;
-                    }
-                    self.apply_filters_and_sort();
-                    self.current_view = RightView::Tracks;
+                    let len = self.left_items.len();
+                    self.select_artist((self.selected_left_index + len - 1) % len);
                 }
             }
             ActivePane::RightMain => {
@@ -977,9 +994,7 @@ impl App {
         match self.active_pane {
             ActivePane::LeftSidebar => {
                 if !self.left_items.is_empty() {
-                    self.selected_left_index = paged_index(self.selected_left_index, self.left_items.len(), delta);
-                    self.apply_filters_and_sort();
-                    self.current_view = RightView::Tracks;
+                    self.select_artist(paged_index(self.selected_left_index, self.left_items.len(), delta));
                 }
             }
             ActivePane::RightMain => {
@@ -1005,6 +1020,17 @@ impl App {
             self.config.save();
         }
     }
+}
+
+/// The row and scroll offset to show `rows` at: where they were left if that entry is still
+/// listed, otherwise the top.
+fn restored_position(rows: &[Entry], saved: Option<&ListPosition>) -> (usize, usize) {
+    saved
+        .and_then(|saved| {
+            let row = rows.iter().position(|e| e.key() == saved.entry)?;
+            Some((row, saved.offset))
+        })
+        .unwrap_or((0, 0))
 }
 
 fn unplayable_message(track: &Track) -> String {
@@ -1043,6 +1069,36 @@ mod tests {
 
     fn plain() -> Track {
         track(&["hls"])
+    }
+
+    fn rows(ids: &[u64]) -> Vec<Entry> {
+        ids.iter()
+            .map(|id| Entry::Track(serde_json::from_value(serde_json::json!({"id": id})).unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn a_list_not_visited_yet_starts_at_the_top() {
+        assert_eq!(restored_position(&rows(&[1, 2, 3]), None), (0, 0));
+    }
+
+    #[test]
+    fn a_visited_list_returns_to_its_entry_and_scroll_position() {
+        let list = rows(&[1, 2, 3]);
+        let saved = ListPosition { entry: list[2].key(), offset: 1 };
+        assert_eq!(restored_position(&list, Some(&saved)), (2, 1));
+    }
+
+    #[test]
+    fn the_position_follows_the_entry_when_the_list_changes_order() {
+        let saved = ListPosition { entry: rows(&[3])[0].key(), offset: 1 };
+        assert_eq!(restored_position(&rows(&[3, 1, 2]), Some(&saved)).0, 0);
+    }
+
+    #[test]
+    fn a_list_that_lost_its_entry_starts_at_the_top() {
+        let saved = ListPosition { entry: rows(&[9])[0].key(), offset: 40 };
+        assert_eq!(restored_position(&rows(&[1, 2, 3]), Some(&saved)), (0, 0));
     }
 
     fn encrypted() -> Track {

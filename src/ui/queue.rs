@@ -182,7 +182,6 @@ pub fn render_queue_view(app: &App, area: Rect, frame: &mut Frame) {
     let queue_count = app.queue.len();
 
     for (idx, track) in q_tracks.iter().enumerate() {
-        let is_selected = is_focused && idx == app.queue_index;
         let track_dur = track.duration.map(|ms| ms / 1000).unwrap_or(0);
         let dur_str = format!("{:02}:{:02}", track_dur / 60, track_dur % 60);
 
@@ -202,9 +201,7 @@ pub fn render_queue_view(app: &App, area: Rect, frame: &mut Frame) {
             res
         };
 
-        let style = if is_selected {
-            Style::default().fg(app.theme.selection_fg).bg(app.theme.selection_bg).add_modifier(Modifier::BOLD)
-        } else if has_now_playing && idx == 0 {
+        let style = if has_now_playing && idx == 0 {
             Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(app.theme.foreground)
@@ -230,12 +227,7 @@ pub fn render_queue_view(app: &App, area: Rect, frame: &mut Frame) {
         .with_offset(app.list_offsets.queue.get())
         .with_selected(Some(app.queue_index));
 
-    let list = List::new(items)
-        .highlight_style(
-            Style::default()
-                .fg(app.theme.selection_fg)
-                .bg(app.theme.selection_bg),
-        );
+    let list = List::new(items).highlight_style(super::selection_style(&app.theme, is_focused));
 
     frame.render_stateful_widget(list, chunks[1], &mut state);
     app.list_offsets.queue.set(state.offset());

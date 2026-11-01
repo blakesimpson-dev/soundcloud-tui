@@ -6,65 +6,42 @@ use ratatui::{
     Frame,
 };
 
+use super::{active_tab_style, pane_block, selection_style};
 use crate::app::{ActivePane, App};
 use crate::browse::Collection;
 use crate::soundcloud::Entry;
 
 pub fn render_left_sidebar(app: &App, area: Rect, frame: &mut Frame) {
-    let chunks = Layout::default()
-        .direction(ratatui::layout::Direction::Vertical)
-        .constraints([
-            Constraint::Length(1), // Section Header: Artists 1/16
-            Constraint::Min(5),    // Artist filter
-        ])
-        .split(area);
-
     let is_focused = app.active_pane == ActivePane::LeftSidebar;
 
-    // Section Header, with the chosen artist's position
-    let header = Line::from(vec![
-        Span::styled("Artists ", Style::default().fg(app.theme.foreground_dim).add_modifier(Modifier::BOLD)),
-        Span::styled(
-            format!("{}/{}", app.selected_left_index + 1, app.left_items.len()),
-            Style::default().fg(app.theme.foreground_dim),
-        ),
-    ]);
-    frame.render_widget(Paragraph::new(header), chunks[0]);
+    let title_style = if is_focused {
+        Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(app.theme.foreground_dim)
+    };
+    // The chosen artist's position
+    let title = Line::from(Span::styled(
+        format!(" Artists {}/{} ", app.selected_left_index + 1, app.left_items.len()),
+        title_style,
+    ));
+    let block = pane_block(&app.theme, is_focused, title);
+    let list_area = block.inner(area);
+    frame.render_widget(block, area);
 
-    // List of Items
+    let item_style = Style::default().fg(app.theme.foreground_dim);
     let items: Vec<ListItem> = app
         .left_items
         .iter()
-        .enumerate()
-        .map(|(idx, item)| {
-            let is_selected = is_focused && idx == app.selected_left_index;
-            let (prefix, style) = if is_selected {
-                ("▎ ", Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD))
-            } else if idx == app.selected_left_index {
-                ("  ", Style::default().fg(app.theme.primary))
-            } else {
-                ("  ", Style::default().fg(app.theme.foreground_dim))
-            };
-
-            ListItem::new(Line::from(vec![
-                Span::styled(prefix, Style::default().fg(app.theme.primary)),
-                Span::styled(item, style),
-            ]))
-        })
+        .map(|item| ListItem::new(Line::from(Span::styled(format!("  {item}"), item_style))))
         .collect();
 
     let mut state = ListState::default()
         .with_offset(app.list_offsets.artists.get())
         .with_selected(Some(app.selected_left_index));
 
-    let list = List::new(items)
-        .highlight_style(
-            Style::default()
-                .fg(app.theme.selection_fg)
-                .bg(app.theme.selection_bg),
-        );
+    let list = List::new(items).highlight_style(selection_style(&app.theme, is_focused));
 
-    frame.render_stateful_widget(list, chunks[1], &mut state);
+    frame.render_stateful_widget(list, list_area, &mut state);
     app.list_offsets.artists.set(state.offset());
 }
 
@@ -91,7 +68,7 @@ fn render_tab_bar(app: &App, area: Rect, frame: &mut Frame) {
             None => String::new(),
         };
         let style = if i == page.tab {
-            Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)
+            active_tab_style(&app.theme, app.active_pane == ActivePane::RightMain)
         } else {
             Style::default().fg(app.theme.foreground_dim)
         };
@@ -167,19 +144,7 @@ pub fn render_center_tracks(app: &App, area: Rect, frame: &mut Frame) {
                 _ => format_duration(entry.duration_ms()),
             };
 
-            let row = Row::new(vec![num, marks, title, count, dur]);
-            if is_focused && idx == app.selected_row {
-                row.style(
-                    Style::default()
-                        .fg(app.theme.selection_fg)
-                        .bg(app.theme.selection_bg)
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else if idx == app.selected_row {
-                row.style(Style::default().fg(app.theme.primary))
-            } else {
-                row.style(Style::default().fg(app.theme.foreground))
-            }
+            Row::new(vec![num, marks, title, count, dur]).style(Style::default().fg(app.theme.foreground))
         })
         .collect();
 
@@ -197,11 +162,7 @@ pub fn render_center_tracks(app: &App, area: Rect, frame: &mut Frame) {
 
     let table = Table::new(rows, widths)
         .header(header)
-        .row_highlight_style(
-            Style::default()
-                .fg(app.theme.selection_fg)
-                .bg(app.theme.selection_bg),
-        );
+        .row_highlight_style(selection_style(&app.theme, is_focused));
 
     frame.render_stateful_widget(table, area, &mut state);
     app.list_offsets.rows.set(state.offset());
