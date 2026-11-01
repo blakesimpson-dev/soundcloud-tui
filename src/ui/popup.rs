@@ -258,7 +258,7 @@ pub fn render_help_popup(app: &App, frame: &mut Frame) {
         return;
     }
 
-    let area = top_centered_rect(70, 27, frame.area());
+    let area = top_centered_rect(70, 28, frame.area());
     frame.render_widget(Clear, area);
 
     let title_line = Line::from(vec![
@@ -306,6 +306,10 @@ pub fn render_help_popup(app: &App, frame: &mut Frame) {
         Line::from(vec![
             Span::styled("  j / k    ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
             Span::styled("Navigate up / down items (Vim keys)", Style::default().fg(app.theme.foreground_dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  PgUp/Dn  ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),
+            Span::styled("Jump 100 items up / down", Style::default().fg(app.theme.foreground_dim)),
         ]),
         Line::from(vec![
             Span::styled("  h / l    ", Style::default().fg(app.theme.foreground).add_modifier(Modifier::BOLD)),

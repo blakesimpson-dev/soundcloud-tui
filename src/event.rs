@@ -186,6 +186,8 @@ pub async fn handle_events(app: &mut App) -> Result<(), String> {
                 KeyCode::Left | KeyCode::Char('h') => app.previous_pane(),
                 KeyCode::Down | KeyCode::Char('j') => app.select_next_item(),
                 KeyCode::Up | KeyCode::Char('k') => app.select_previous_item(),
+                KeyCode::PageDown => app.page_selection(1),
+                KeyCode::PageUp => app.page_selection(-1),
                 KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Char('L') | KeyCode::Char('R') => {
                     if let Some(track) = app.currently_playing.as_ref().or(app.selected_track()).cloned() {
                         if key.code == KeyCode::Char('R') {

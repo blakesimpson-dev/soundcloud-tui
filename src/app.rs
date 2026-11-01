@@ -206,6 +206,9 @@ pub const ALL_ARTISTS: &str = "All Artists";
 /// list (search results) is requested.
 const LOAD_MORE_WITHIN: usize = 10;
 
+/// How many rows PageUp and PageDown move the selection.
+const PAGE_SIZE: isize = 100;
+
 pub fn clean_artist_title(raw_title: &str, raw_artist: &str) -> (String, String) {
     let mut title = raw_title.to_string();
     let mut artist = raw_artist.to_string();
@@ -968,6 +971,33 @@ impl App {
         }
     }
 
+    /// Moves the selection `pages` pages through the focused list, stopping at its ends.
+    pub fn page_selection(&mut self, pages: isize) {
+        let delta = pages * PAGE_SIZE;
+        match self.active_pane {
+            ActivePane::LeftSidebar => {
+                if !self.left_items.is_empty() {
+                    self.selected_left_index = paged_index(self.selected_left_index, self.left_items.len(), delta);
+                    self.apply_filters_and_sort();
+                    self.current_view = RightView::Tracks;
+                }
+            }
+            ActivePane::RightMain => {
+                if self.current_view == RightView::Tracks {
+                    if !self.rows.is_empty() {
+                        self.selected_row = paged_index(self.selected_row, self.rows.len(), delta);
+                        self.load_more_if_near_end();
+                    }
+                } else if self.current_view == RightView::Queue {
+                    let len = self.get_queue_tracks().len();
+                    if len > 0 {
+                        self.queue_index = paged_index(self.queue_index, len, delta);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn select_theme(&mut self, index: usize) {
         if index < self.available_themes.len() {
             self.theme = self.available_themes[index].clone();
@@ -979,6 +1009,11 @@ impl App {
 
 fn unplayable_message(track: &Track) -> String {
     format!("Can't play '{}': No playable (unencrypted) stream", track.display_title())
+}
+
+/// `current` moved by `delta` within a non-empty list of `len` items, stopping at either end.
+fn paged_index(current: usize, len: usize, delta: isize) -> usize {
+    current.saturating_add_signed(delta).min(len - 1)
 }
 
 /// The first playable track stepping `delta` places at a time from `current` (from the start if
@@ -1012,6 +1047,15 @@ mod tests {
 
     fn encrypted() -> Track {
         track(&["cbc-encrypted-hls", "ctr-encrypted-hls"])
+    }
+
+    #[test]
+    fn paging_moves_by_the_delta_and_stops_at_the_ends() {
+        assert_eq!(paged_index(150, 1000, 100), 250);
+        assert_eq!(paged_index(150, 1000, -100), 50);
+        assert_eq!(paged_index(950, 1000, 100), 999);
+        assert_eq!(paged_index(50, 1000, -100), 0);
+        assert_eq!(paged_index(0, 1, 100), 0);
     }
 
     #[test]
